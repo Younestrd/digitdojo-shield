@@ -1,0 +1,50 @@
+name: Pterodactyl infrastructure bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install infrastructure dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes mariadb-server redis-server php8.3-cli php8.3-fpm php8.3-mysql php8.3-mbstring php8.3-xml php8.3-curl php8.3-zip php8.3-gd composer nginx docker.io curl
+      - name: Start and verify infrastructure services
+        run: |
+          set -euo pipefail
+          sudo systemctl enable --now mariadb redis-server php8.3-fpm nginx docker
+          {
+            echo '=== MariaDB ==='
+            sudo systemctl --no-pager --full status mariadb
+            sudo mariadb --protocol=socket -e 'SELECT VERSION() AS version;'
+            echo '=== Redis ==='
+            sudo systemctl --no-pager --full status redis-server
+            redis-cli ping
+            echo '=== PHP ==='
+            php --version
+            php -m
+            composer --version
+            echo '=== Nginx ==='
+            sudo nginx -t
+            sudo systemctl --no-pager --full status nginx
+            curl --fail --silent --show-error http://127.0.0.1/ >/dev/null
+            echo '=== Docker ==='
+            sudo systemctl --no-pager --full status docker
+            sudo docker info
+            sudo docker run --rm hello-world
+          } |& tee infrastructure-bootstrap.log
+      - name: Retain infrastructure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pterodactyl-infrastructure-${{ github.run_id }}
+          path: infrastructure-bootstrap.log
+          if-no-files-found: error
