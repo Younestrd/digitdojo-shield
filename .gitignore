@@ -1,0 +1,6 @@
+# Local build and test artifacts
+*.exe
+*.test
+cover
+cover.out
+firewall-integration.log
