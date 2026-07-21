@@ -11,7 +11,7 @@ admin_count="$(php -r "require 'vendor/autoload.php'; \$app=require 'bootstrap/a
 version="$(php artisan --version)"
 commands="$(php artisan list --raw)"
 printf 'Installed Panel: %s\n' "$version"
-if grep -Eq '^(p:api:key|p:application-api:key|api:key):' <<<"$commands"; then
+if grep -Eq '^(p:api:key|p:application-api:key|api:key)$' <<<"$commands"; then
   echo 'An API-key Artisan command was detected, but its interface is not a documented stable bootstrap contract; refusing to invoke it automatically.' >&2
   exit 1
 fi
