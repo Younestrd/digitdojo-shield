@@ -22,7 +22,7 @@ jobs:
       - name: Initialize firewall integration diagnostics
         run: touch firewall-integration.log
       - name: Install kernel firewall test tools
-        run: sudo apt-get update && sudo apt-get install --yes nftables iproute2 libcap2-bin
+        run: sudo apt-get update && sudo apt-get install --yes nftables iproute2 libcap2-bin curl
       - name: Install and verify Docker Engine
         run: |
           set -o pipefail
@@ -43,6 +43,10 @@ jobs:
           sudo capsh --print | grep -q cap_net_admin
           sudo ip netns add shield-ci-capability-check
           sudo ip netns exec shield-ci-capability-check nft list ruleset
+      - name: Diagnose Docker published-port packet paths
+        run: |
+          set -o pipefail
+          sudo bash scripts/docker-network-diagnostics.sh 2>&1 | tee -a docker-network-diagnostics.log
       - name: Unit tests and static analysis
         run: |
           go test -count=1 ./...
@@ -56,5 +60,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: firewall-integration-${{ github.run_id }}
-          path: firewall-integration.log
+          path: |
+            firewall-integration.log
+            docker-network-diagnostics.log
           if-no-files-found: error
