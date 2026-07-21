@@ -24,7 +24,7 @@ Every item must be checked by a retained, successful Linux CI artifact before an
 - [x] Full `install/uninstall.sh` execution in an isolated Linux mount and network namespace; passed 20 times in run #8.
 - [ ] Ubuntu version matrix: supported minimum and current releases.
 - [ ] Debian version matrix: supported minimum and current releases.
-- [ ] Real Docker Engine integration (container publishing, NAT, bridge networking, and restart) on a supported host.
+- [ ] Real Docker Engine integration (container publishing, NAT, bridge networking, restart, Shield update, and uninstall) on a supported host; implemented but not yet validated by a retained artifact.
 - [ ] Pterodactyl Wings integration using a documented supported version and representative game-server traffic.
 - [ ] Operational rollout plan: backup, canary, explicit operator confirmation, health checks, and tested recovery procedure.
 - [ ] Independent security review of rule priority, verdict interaction, and accessibility impact.
@@ -38,7 +38,7 @@ Every item must be checked by a retained, successful Linux CI artifact before an
 | Debian (any release) | unsupported | No retained Debian kernel or nftables userspace evidence. |
 | nftables < 1.0.9 | unsupported | The runtime rejects it. |
 | nftables >= 1.0.9 on an untested distribution | unverified | Version acceptance is not distribution or kernel compatibility evidence. |
-| Docker Engine | unsupported for enforcement | Only a synthetic Docker-style nftables preservation test is being added. It is not Docker Engine integration evidence. |
+| Docker Engine | unsupported for enforcement | A real Docker Engine suite is implemented but has no retained successful Linux artifact yet. |
 | Pterodactyl/Wings | unsupported for enforcement | Wings uses Docker but needs its own real deployment and traffic validation. |
 
 All candidates also require Linux, `CAP_NET_ADMIN`, an nftables-compatible kernel, and the runtime checks documented in `docs/firewall-integration-testing.md`. The namespace suite additionally requires `CAP_SYS_ADMIN`.

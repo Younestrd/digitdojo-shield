@@ -30,6 +30,7 @@ const (
 	clientIPv6    = "2001:db8:1::2"
 	blockedIPv4   = "192.0.2.1:8080"
 	blockedIPv6   = "[2001:db8:1::1]:8080"
+	shieldTable   = "digitdojo_shield"
 )
 
 type namespaceRunner struct {
@@ -312,6 +313,74 @@ add rule ip docker_test forward counter
 	})
 }
 
+func TestDockerEngineNFTablesIntegration(t *testing.T) {
+	if os.Getenv("SHIELD_DOCKER_INTEGRATION") != "1" {
+		t.Skip("Docker Engine integration is enabled only by the privileged CI workflow")
+	}
+	requireLinuxFirewallEnvironment(t)
+	requireDockerEngine(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	hostBefore := commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset")
+	resourceSuffix := strconv.Itoa(os.Getpid())
+	networkName := "shield-ci-net-" + resourceSuffix
+	containerName := "shield-ci-web-" + resourceSuffix
+	defer func() {
+		commandBestEffort("docker", "rm", "--force", containerName)
+		commandBestEffort("docker", "network", "rm", networkName)
+		hostAfter, err := exec.Command("nft", "--json", "list", "ruleset").Output()
+		if err != nil {
+			t.Errorf("read host ruleset after Docker test: %v", err)
+		} else if !bytes.Equal(normalizeNFTJSON(t, hostBefore), normalizeNFTJSON(t, hostAfter)) {
+			t.Errorf("Docker integration test did not restore the host nftables ruleset")
+		}
+	}()
+
+	runDocker(t, ctx, "network", "create", "--driver", "bridge", networkName)
+	runDocker(t, ctx, "run", "--detach", "--name", containerName, "--network", networkName, "--publish", "127.0.0.1::80", "nginx:1.27-alpine")
+	publishedAddress := dockerPublishedAddress(t, ctx, containerName)
+	assertHostCanConnect(t, publishedAddress, true)
+
+	dockerRulesBefore := commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset")
+	requireDockerManagedNFTables(t, dockerRulesBefore)
+
+	implementation, err := shieldnft.NewBackend()
+	if err != nil {
+		t.Fatalf("create host nftables backend: %v", err)
+	}
+	controller := integrationController(t, implementation)
+	state := backend.DesiredState{PermanentBans: []netip.Addr{netip.MustParseAddr("198.51.100.240")}}
+	if err := controller.Reconcile(ctx, state); err != nil {
+		t.Fatalf("reconcile Shield state alongside Docker: %v", err)
+	}
+	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
+
+	runDocker(t, ctx, "restart", containerName)
+	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
+
+	runDocker(t, ctx, "stop", containerName)
+	assertHostCanConnect(t, publishedAddress, false)
+	runDocker(t, ctx, "start", containerName)
+	assertHostCanConnect(t, publishedAddress, true)
+
+	if err := controller.Reconcile(ctx, backend.DesiredState{TemporaryBans: []backend.TemporaryBan{{Address: netip.MustParseAddr("198.51.100.241"), ExpiresAt: time.Now().Add(time.Minute)}}}); err != nil {
+		t.Fatalf("update Shield state while Docker container is running: %v", err)
+	}
+	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
+
+	uninstallScript, pathErr := filepath.Abs(filepath.Join("..", "..", "install", "uninstall.sh"))
+	if pathErr != nil {
+		t.Fatalf("resolve uninstall script: %v", pathErr)
+	}
+	runStagedHostUninstall(t, ctx, uninstallScript)
+	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
+}
+
 func TestNamespaceListener(t *testing.T) {
 	if os.Getenv("SHIELD_TEST_LISTENER") != "1" {
 		return
@@ -406,6 +475,17 @@ func requireLinuxFirewallEnvironment(t *testing.T) {
 	}
 }
 
+func requireDockerEngine(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Fatalf("Docker Engine integration requires docker CLI: %v", err)
+	}
+	output := commandOutput(t, context.Background(), nil, "docker", "info", "--format", "{{.ServerVersion}}")
+	if strings.TrimSpace(string(output)) == "" {
+		t.Fatal("Docker Engine integration requires a running Docker daemon")
+	}
+}
+
 func setupNamespaces(t *testing.T, ctx context.Context, protected, client, protectedLink, clientLink string) {
 	t.Helper()
 	runCommand(t, ctx, "ip", "netns", "add", protected)
@@ -481,6 +561,85 @@ func assertRestrictedServiceBlocked(t *testing.T, namespace string) {
 	}
 }
 
+func runDocker(t *testing.T, ctx context.Context, args ...string) []byte {
+	t.Helper()
+	return commandOutput(t, ctx, nil, "docker", args...)
+}
+
+func dockerPublishedAddress(t *testing.T, ctx context.Context, container string) string {
+	t.Helper()
+	output := strings.TrimSpace(string(runDocker(t, ctx, "port", container, "80/tcp")))
+	host, port, err := net.SplitHostPort(output)
+	if err != nil || host != "127.0.0.1" || port == "" {
+		t.Fatalf("parse Docker published port %q: %v", output, err)
+	}
+	return output
+}
+
+func assertHostCanConnect(t *testing.T, address string, expected bool) {
+	t.Helper()
+	connection, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if (err == nil) != expected {
+		t.Fatalf("published container connectivity to %s: got %t, expected %t (error=%v)", address, err == nil, expected, err)
+	}
+}
+
+func requireDockerManagedNFTables(t *testing.T, ruleset []byte) {
+	t.Helper()
+	if !strings.Contains(strings.ToLower(string(ruleset)), "docker") {
+		t.Fatal("Docker published-port setup did not create observable Docker-managed nftables objects")
+	}
+}
+
+func assertDockerRulesUnchanged(t *testing.T, expected, actual []byte) {
+	t.Helper()
+	if !bytes.Equal(withoutShieldNFTObjects(t, expected), withoutShieldNFTObjects(t, actual)) {
+		t.Fatal("Shield operation changed Docker-managed or other host nftables objects")
+	}
+}
+
+func withoutShieldNFTObjects(t *testing.T, input []byte) []byte {
+	t.Helper()
+	var document struct {
+		NFTables []map[string]json.RawMessage `json:"nftables"`
+	}
+	if err := json.Unmarshal(input, &document); err != nil {
+		t.Fatalf("decode nft JSON: %v\n%s", err, input)
+	}
+	filtered := make([]map[string]json.RawMessage, 0, len(document.NFTables))
+	for _, object := range document.NFTables {
+		if !isShieldNFTObject(t, object) {
+			filtered = append(filtered, object)
+		}
+	}
+	document.NFTables = filtered
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("encode filtered nft JSON: %v", err)
+	}
+	return normalizeNFTJSON(t, encoded)
+}
+
+func isShieldNFTObject(t *testing.T, object map[string]json.RawMessage) bool {
+	t.Helper()
+	for _, raw := range object {
+		var metadata struct {
+			Name  string `json:"name"`
+			Table string `json:"table"`
+		}
+		if err := json.Unmarshal(raw, &metadata); err != nil {
+			t.Fatalf("decode nft object metadata: %v", err)
+		}
+		if metadata.Name == shieldTable || metadata.Table == shieldTable {
+			return true
+		}
+	}
+	return false
+}
+
 func namespaceCanConnect(namespace, address string) bool {
 	executable, err := os.Executable()
 	if err != nil {
@@ -527,6 +686,26 @@ test ! -e /usr/local/bin/shield
 test ! -e /usr/local/bin/shieldd
 `
 	runCommand(t, ctx, "ip", "netns", "exec", namespace, "unshare", "--mount", "--propagation", "private", "bash", "-ceu", script, "shield-uninstall", uninstallScript)
+}
+
+func runStagedHostUninstall(t *testing.T, ctx context.Context, uninstallScript string) {
+	t.Helper()
+	const script = `set -euo pipefail
+mount --make-rprivate /
+mount -t tmpfs tmpfs /etc
+mount -t tmpfs tmpfs /usr/local
+mount -t tmpfs tmpfs /var
+mkdir -p /etc/systemd/system /etc/digitdojo-shield /var/log/digitdojo-shield /var/lib/digitdojo-shield /usr/local/bin
+touch /etc/systemd/system/digitdojo-shield.service /etc/digitdojo-shield/config.yml /var/log/digitdojo-shield/shield.log /var/lib/digitdojo-shield/state.json /usr/local/bin/shield /usr/local/bin/shieldd
+bash "$1"
+test ! -e /etc/systemd/system/digitdojo-shield.service
+test ! -e /etc/digitdojo-shield
+test ! -e /var/log/digitdojo-shield
+test ! -e /var/lib/digitdojo-shield
+test ! -e /usr/local/bin/shield
+test ! -e /usr/local/bin/shieldd
+`
+	runCommand(t, ctx, "unshare", "--mount", "--propagation", "private", "bash", "-ceu", script, "shield-uninstall", uninstallScript)
 }
 
 func normalizeNFTJSON(t *testing.T, input []byte) []byte {
