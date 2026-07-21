@@ -140,7 +140,7 @@ An exported enforcement-enabled controller constructor may be added only after:
 2. the suite passes with the supported nft userspace versions;
 3. a failure run proves the runner's host ruleset is unchanged;
 4. rollback and cleanup tests pass repeatedly under `go test -count=20` (CI
-   currently runs the complete suite five times per execution);
+   runs the complete suite twenty times per execution);
 5. test artifacts are retained in CI for review.
 
 Until that gate is met, the nftables factory is registered for capability and

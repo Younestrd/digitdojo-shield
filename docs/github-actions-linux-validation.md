@@ -48,17 +48,16 @@ message before touching a ruleset if any prerequisite is absent.
 
 After pushing `main`, select **Linux firewall integration** in Actions and
 choose **Run workflow**, or wait for the push-triggered run. The workflow runs
-the namespace suite five times:
+the namespace suite twenty times:
 
 ```sh
-sudo env "PATH=$PATH" go test -tags=integration -count=5 -v ./internal/firewall
+sudo env "PATH=$PATH" go test -tags=integration -count=20 -v ./internal/firewall
 ```
 
 Download the `firewall-integration-<run-id>` artifact regardless of result.
 For every failed run, retain its log, reproduce the reported namespace test,
-add a regression test, and rerun until clean. The release gate still requires
-a separately recorded `-count=20` stability run after the regular workflow is
-green.
+add a regression test, and rerun until clean. This workflow itself supplies the
+required `-count=20` stability evidence when it is green.
 
 ## Gate rule
 
