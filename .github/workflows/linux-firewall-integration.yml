@@ -30,8 +30,12 @@ jobs:
             if ! command -v docker >/dev/null 2>&1; then
               sudo apt-get install --yes docker.io
             fi
+            sudo install -d -m 0755 /etc/docker
+            printf '%s\n' '{"iptables": true, "ip6tables": true}' | sudo tee /etc/docker/daemon.json >/dev/null
             sudo systemctl start docker || sudo service docker start
+            sudo systemctl restart docker || sudo service docker restart
             sudo docker info --format 'Docker Engine {{.ServerVersion}} on {{.OperatingSystem}}'
+            sudo docker info
           } 2>&1 | tee -a firewall-integration.log
       - name: Verify network namespace and CAP_NET_ADMIN access
         run: |
@@ -46,7 +50,7 @@ jobs:
       - name: Privileged nftables integration tests
         run: |
           set -o pipefail
-          sudo env "PATH=$PATH" SHIELD_DOCKER_INTEGRATION=1 go test -tags=integration -count=20 -v ./internal/firewall 2>&1 | tee firewall-integration.log
+          sudo env "PATH=$PATH" SHIELD_DOCKER_INTEGRATION=1 go test -tags=integration -count=20 -v ./internal/firewall 2>&1 | tee -a firewall-integration.log
       - name: Retain firewall integration diagnostics
         if: always()
         uses: actions/upload-artifact@v4
