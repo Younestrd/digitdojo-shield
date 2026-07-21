@@ -17,8 +17,9 @@ suffix="${RANDOM}${RANDOM}"
 network="shield-diag-net-${suffix}"
 web="shield-diag-web-${suffix}"
 client_namespace="shield-diag-client-${suffix}"
-host_link="sdiag-host-${suffix:0:5}"
-client_link="sdiag-client-${suffix:0:5}"
+link_suffix="${RANDOM}"
+host_link="sdh${link_suffix}"
+client_link="sdc${link_suffix}"
 failed=0
 
 cleanup() {
