@@ -19,13 +19,20 @@ jobs:
         with:
           go-version: '1.22.x'
           cache: true
+      - name: Initialize firewall integration diagnostics
+        run: : > firewall-integration.log
       - name: Install kernel firewall test tools
         run: sudo apt-get update && sudo apt-get install --yes nftables iproute2 libcap2-bin
       - name: Install and verify Docker Engine
         run: |
-          sudo apt-get install --yes docker.io
-          sudo systemctl enable --now docker
-          sudo docker info --format 'Docker Engine {{.ServerVersion}} on {{.OperatingSystem}}'
+          set -o pipefail
+          {
+            if ! command -v docker >/dev/null 2>&1; then
+              sudo apt-get install --yes docker.io
+            fi
+            sudo systemctl start docker || sudo service docker start
+            sudo docker info --format 'Docker Engine {{.ServerVersion}} on {{.OperatingSystem}}'
+          } 2>&1 | tee -a firewall-integration.log
       - name: Verify network namespace and CAP_NET_ADMIN access
         run: |
           trap 'sudo ip netns delete shield-ci-capability-check >/dev/null 2>&1 || true' EXIT
