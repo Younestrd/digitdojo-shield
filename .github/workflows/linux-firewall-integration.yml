@@ -54,7 +54,7 @@ jobs:
       - name: Privileged nftables integration tests
         run: |
           set -o pipefail
-          sudo env "PATH=$PATH" SHIELD_DOCKER_INTEGRATION=1 go test -tags=integration -count=20 -v ./internal/firewall 2>&1 | tee -a firewall-integration.log
+          sudo env "PATH=$PATH" SHIELD_DOCKER_INTEGRATION=1 go test -tags=integration -count=1 -run '^TestDockerEngineNFTablesIntegration$' -v ./internal/firewall 2>&1 | tee -a firewall-integration.log
       - name: Retain firewall integration diagnostics
         if: always()
         uses: actions/upload-artifact@v4

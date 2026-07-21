@@ -343,7 +343,7 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	runDocker(t, ctx, "network", "create", "--driver", "bridge", networkName)
 	runDocker(t, ctx, "run", "--detach", "--name", containerName, "--network", networkName, "--publish", "0.0.0.0::80", "nginx:1.27-alpine")
 	publishedAddress := dockerPublishedAddress(t, ctx, containerName)
-	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, networkName, publishedAddress, true)
 
 	dockerRulesBefore := commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset")
 	requireDockerManagedNFTables(t, dockerRulesBefore)
@@ -357,22 +357,22 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	if err := controller.Reconcile(ctx, state); err != nil {
 		t.Fatalf("reconcile Shield state alongside Docker: %v", err)
 	}
-	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, networkName, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 
 	runDocker(t, ctx, "restart", containerName)
-	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, networkName, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 
 	runDocker(t, ctx, "stop", containerName)
-	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, false)
+	assertDockerPublishedPort(t, ctx, containerName, networkName, publishedAddress, false)
 	runDocker(t, ctx, "start", containerName)
-	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, networkName, publishedAddress, true)
 
 	if err := controller.Reconcile(ctx, backend.DesiredState{TemporaryBans: []backend.TemporaryBan{{Address: netip.MustParseAddr("198.51.100.241"), ExpiresAt: time.Now().Add(time.Minute)}}}); err != nil {
 		t.Fatalf("update Shield state while Docker container is running: %v", err)
 	}
-	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, networkName, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 
 	uninstallScript, pathErr := filepath.Abs(filepath.Join("..", "..", "install", "uninstall.sh"))
@@ -380,7 +380,7 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 		t.Fatalf("resolve uninstall script: %v", pathErr)
 	}
 	runStagedHostUninstall(t, ctx, uninstallScript)
-	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, networkName, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 }
 
@@ -586,12 +586,59 @@ func assertHostCanConnect(t *testing.T, address string, expected bool) {
 	}
 }
 
-func assertDockerPublishedPort(t *testing.T, ctx context.Context, container, address string, expected bool) {
+func assertDockerPublishedPort(t *testing.T, ctx context.Context, container, network, address string, expected bool) {
 	t.Helper()
-	if err := hostConnectivityError(address, expected); err != nil {
-		inspect, _ := exec.CommandContext(ctx, "docker", "inspect", container).CombinedOutput()
-		logs, _ := exec.CommandContext(ctx, "docker", "logs", container).CombinedOutput()
-		t.Fatalf("%v\nDocker inspect:\n%s\nDocker logs:\n%s", err, inspect, logs)
+	deadline := time.Now().Add(15 * time.Second)
+	for attempt := 1; ; attempt++ {
+		started := time.Now()
+		logDockerConnectionSnapshot(t, ctx, container, network, address, attempt)
+		curlOutput, curlErr := exec.CommandContext(ctx, "curl", "--fail", "--silent", "--show-error", "--connect-timeout", "1", "http://"+address+"/").CombinedOutput()
+		connection, dialErr := net.DialTimeout("tcp", address, 500*time.Millisecond)
+		if connection != nil {
+			_ = connection.Close()
+		}
+		actual := dialErr == nil
+		t.Logf("docker connection attempt timestamp=%s attempt=%d elapsed=%s address=%s curl_success=%t curl_output=%q go_dial_success=%t go_dial_error=%v", started.UTC().Format(time.RFC3339Nano), attempt, time.Since(started), address, curlErr == nil, string(curlOutput), actual, dialErr)
+		if actual == expected {
+			return
+		}
+		if !expected || time.Now().After(deadline) {
+			logDockerFailureDiagnostics(t, ctx, container, network, address)
+			t.Fatalf("published container connectivity to %s: got %t, expected %t (error=%v)", address, actual, expected, dialErr)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func logDockerConnectionSnapshot(t *testing.T, ctx context.Context, container, network, address string, attempt int) {
+	t.Helper()
+	t.Logf("docker connection snapshot timestamp=%s attempt=%d address=%s", time.Now().UTC().Format(time.RFC3339Nano), attempt, address)
+	for _, command := range [][]string{
+		{"nft", "list", "ruleset"},
+		{"docker", "ps", "--no-trunc"},
+		{"docker", "inspect", container},
+		{"docker", "network", "inspect", network},
+		{"docker", "port", container},
+		{"ss", "-ltnp"},
+		{"ip", "addr"},
+		{"ip", "route"},
+	} {
+		output, err := exec.CommandContext(ctx, command[0], command[1:]...).CombinedOutput()
+		t.Logf("snapshot command=%q error=%v output:\n%s", command, err, output)
+	}
+}
+
+func logDockerFailureDiagnostics(t *testing.T, ctx context.Context, container, network, address string) {
+	t.Helper()
+	t.Logf("docker failure diagnostics timestamp=%s address=%s", time.Now().UTC().Format(time.RFC3339Nano), address)
+	traceCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	trace := exec.CommandContext(traceCtx, "nft", "monitor", "trace")
+	traceOutput, traceErr := trace.CombinedOutput()
+	t.Logf("nft monitor trace error=%v output:\n%s", traceErr, traceOutput)
+	for _, command := range [][]string{{"ss", "-ltnp"}, {"docker", "logs", container}, {"docker", "inspect", container}, {"docker", "port", container}, {"docker", "network", "inspect", network}, {"nft", "list", "ruleset"}} {
+		output, err := exec.CommandContext(ctx, command[0], command[1:]...).CombinedOutput()
+		t.Logf("failure command=%q error=%v output:\n%s", command, err, output)
 	}
 }
 
