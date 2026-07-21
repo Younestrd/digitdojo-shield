@@ -12,11 +12,22 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Capture pre-install system information
+        run: |
+          mkdir -p artifacts
+          {
+            echo '=== Ubuntu release ==='; cat /etc/os-release
+            echo '=== Architecture ==='; uname -a; dpkg --print-architecture
+            echo '=== Disk ==='; df -h
+            echo '=== Memory ==='; free -h
+          } > artifacts/system-info.log 2>&1
+          { grep -R . /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || true; } > artifacts/apt-sources.log 2>&1
       - name: Install infrastructure dependencies
         run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes mariadb-server redis-server php8.3-cli php8.3-fpm php8.3-mysql php8.3-mbstring php8.3-xml php8.3-curl php8.3-zip php8.3-gd composer nginx docker.io curl
+          mkdir -p artifacts
+          : > artifacts/install.log
+          set -o pipefail
+          { sudo apt-get update; sudo apt-get install --yes mariadb-server redis-server php8.3-cli php8.3-fpm php8.3-mysql php8.3-mbstring php8.3-xml php8.3-curl php8.3-zip php8.3-gd composer nginx docker.io curl; } |& tee artifacts/install.log
       - name: Start and verify infrastructure services
         run: |
           set -euo pipefail
@@ -46,5 +57,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pterodactyl-infrastructure-${{ github.run_id }}
-          path: infrastructure-bootstrap.log
+          path: |
+            artifacts/install.log
+            artifacts/apt-sources.log
+            artifacts/system-info.log
+            infrastructure-bootstrap.log
           if-no-files-found: error
