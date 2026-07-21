@@ -65,6 +65,10 @@ The privileged namespace suite is run by
 root and `CAP_NET_ADMIN`; compiling that suite on another platform does not
 count as kernel verification.
 
+See [GitHub Actions Linux validation](docs/github-actions-linux-validation.md)
+for remote configuration, runner requirements, workflow dispatch, and artifact
+collection.
+
 The nftables backend requires nftables 1.0.9 or newer and Linux
 `CAP_NET_ADMIN`. The namespace integration suite also requires
 `CAP_SYS_ADMIN`; missing prerequisites are reported before any firewall command
