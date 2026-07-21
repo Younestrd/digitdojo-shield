@@ -1,4 +1,5 @@
 # Keep executable Linux inputs stable when this repository is edited on Windows.
+.gitattributes text eol=lf
 *.go  text eol=lf
 *.sh  text eol=lf
 *.yml text eol=lf
