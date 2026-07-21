@@ -341,7 +341,7 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	}()
 
 	runDocker(t, ctx, "network", "create", "--driver", "bridge", networkName)
-	runDocker(t, ctx, "run", "--detach", "--name", containerName, "--network", networkName, "--publish", "127.0.0.1::80", "nginx:1.27-alpine")
+	runDocker(t, ctx, "run", "--detach", "--name", containerName, "--network", networkName, "--publish", "0.0.0.0::80", "nginx:1.27-alpine")
 	publishedAddress := dockerPublishedAddress(t, ctx, containerName)
 	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
 
@@ -573,10 +573,10 @@ func dockerPublishedAddress(t *testing.T, ctx context.Context, container string)
 	t.Helper()
 	output := strings.TrimSpace(string(runDocker(t, ctx, "port", container, "80/tcp")))
 	host, port, err := net.SplitHostPort(output)
-	if err != nil || host != "127.0.0.1" || port == "" {
+	if err != nil || (host != "127.0.0.1" && host != "0.0.0.0") || port == "" {
 		t.Fatalf("parse Docker published port %q: %v", output, err)
 	}
-	return output
+	return net.JoinHostPort("127.0.0.1", port)
 }
 
 func assertHostCanConnect(t *testing.T, address string, expected bool) {
