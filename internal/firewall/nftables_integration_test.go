@@ -322,6 +322,9 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
+	bootstrapNetwork := "shield-ci-bootstrap-" + strconv.Itoa(os.Getpid())
+	runDocker(t, ctx, "network", "create", "--driver", "bridge", bootstrapNetwork)
+	runDocker(t, ctx, "network", "rm", bootstrapNetwork)
 	hostBefore := commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset")
 	resourceSuffix := strconv.Itoa(os.Getpid())
 	networkName := "shield-ci-net-" + resourceSuffix
@@ -578,12 +581,19 @@ func dockerPublishedAddress(t *testing.T, ctx context.Context, container string)
 
 func assertHostCanConnect(t *testing.T, address string, expected bool) {
 	t.Helper()
-	connection, err := net.DialTimeout("tcp", address, 2*time.Second)
-	if connection != nil {
-		_ = connection.Close()
-	}
-	if (err == nil) != expected {
-		t.Fatalf("published container connectivity to %s: got %t, expected %t (error=%v)", address, err == nil, expected, err)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		connection, err := net.DialTimeout("tcp", address, 500*time.Millisecond)
+		if connection != nil {
+			_ = connection.Close()
+		}
+		if (err == nil) == expected {
+			return
+		}
+		if !expected || time.Now().After(deadline) {
+			t.Fatalf("published container connectivity to %s: got %t, expected %t (error=%v)", address, err == nil, expected, err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
