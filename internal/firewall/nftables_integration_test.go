@@ -34,6 +34,16 @@ type namespaceRunner struct {
 	namespace string
 }
 
+type listenerSpec struct {
+	network string
+	address string
+}
+
+var namespaceListenerSpecs = []listenerSpec{
+	{network: "tcp4", address: "0.0.0.0:22"},
+	{network: "tcp6", address: "[::]:22"},
+}
+
 func (r namespaceRunner) Run(ctx context.Context, args []string, input []byte) ([]byte, error) {
 	commandArgs := append([]string{"netns", "exec", r.namespace, "nft"}, args...)
 	command := exec.CommandContext(ctx, "ip", commandArgs...)
@@ -267,10 +277,10 @@ func TestNamespaceListener(t *testing.T) {
 		return
 	}
 	listeners := make([]net.Listener, 0, 2)
-	for _, address := range []string{"0.0.0.0:22", "[::]:22"} {
-		listener, err := net.Listen("tcp", address)
+	for _, spec := range namespaceListenerSpecs {
+		listener, err := net.Listen(spec.network, spec.address)
 		if err != nil {
-			t.Fatalf("listen on %s: %v", address, err)
+			t.Fatalf("listen on %s %s: %v", spec.network, spec.address, err)
 		}
 		listeners = append(listeners, listener)
 	}
@@ -287,6 +297,18 @@ func TestNamespaceListener(t *testing.T) {
 		}(listener)
 	}
 	select {}
+}
+
+func TestNamespaceListenerUsesSeparateIPv4AndIPv6Sockets(t *testing.T) {
+	if len(namespaceListenerSpecs) != 2 {
+		t.Fatalf("expected IPv4 and IPv6 listener specifications, got %+v", namespaceListenerSpecs)
+	}
+	if namespaceListenerSpecs[0] != (listenerSpec{network: "tcp4", address: "0.0.0.0:22"}) {
+		t.Fatalf("unexpected IPv4 listener specification: %+v", namespaceListenerSpecs[0])
+	}
+	if namespaceListenerSpecs[1] != (listenerSpec{network: "tcp6", address: "[::]:22"}) {
+		t.Fatalf("unexpected IPv6 listener specification: %+v", namespaceListenerSpecs[1])
+	}
 }
 
 func TestNamespaceDialHelper(t *testing.T) {
