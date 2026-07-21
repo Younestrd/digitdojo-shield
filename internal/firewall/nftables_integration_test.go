@@ -28,6 +28,8 @@ const (
 	clientIPv4    = "192.0.2.2"
 	protectedIPv6 = "[2001:db8:1::1]:22"
 	clientIPv6    = "2001:db8:1::2"
+	blockedIPv4   = "192.0.2.1:8080"
+	blockedIPv6   = "[2001:db8:1::1]:8080"
 )
 
 type namespaceRunner struct {
@@ -42,6 +44,8 @@ type listenerSpec struct {
 var namespaceListenerSpecs = []listenerSpec{
 	{network: "tcp4", address: "0.0.0.0:22"},
 	{network: "tcp6", address: "[::]:22"},
+	{network: "tcp4", address: "0.0.0.0:8080"},
+	{network: "tcp6", address: "[::]:8080"},
 }
 
 func (r namespaceRunner) Run(ctx context.Context, args []string, input []byte) ([]byte, error) {
@@ -144,6 +148,7 @@ add rule ip docker_test forward counter
 			t.Fatalf("reconcile empty state: %v", err)
 		}
 		assertConnectivity(t, clientNamespace, true)
+		assertRestrictedServiceBlocked(t, clientNamespace)
 		assertUnrelatedUnchanged(t, ctx, protectedNamespace, unrelatedBefore)
 		assertDockerUnchanged(t, ctx, protectedNamespace, dockerBefore)
 	})
@@ -335,14 +340,20 @@ func TestNamespaceListener(t *testing.T) {
 }
 
 func TestNamespaceListenerUsesSeparateIPv4AndIPv6Sockets(t *testing.T) {
-	if len(namespaceListenerSpecs) != 2 {
-		t.Fatalf("expected IPv4 and IPv6 listener specifications, got %+v", namespaceListenerSpecs)
+	if len(namespaceListenerSpecs) != 4 {
+		t.Fatalf("expected separate IPv4 and IPv6 listener specifications for both test ports, got %+v", namespaceListenerSpecs)
 	}
 	if namespaceListenerSpecs[0] != (listenerSpec{network: "tcp4", address: "0.0.0.0:22"}) {
 		t.Fatalf("unexpected IPv4 listener specification: %+v", namespaceListenerSpecs[0])
 	}
 	if namespaceListenerSpecs[1] != (listenerSpec{network: "tcp6", address: "[::]:22"}) {
 		t.Fatalf("unexpected IPv6 listener specification: %+v", namespaceListenerSpecs[1])
+	}
+	if namespaceListenerSpecs[2] != (listenerSpec{network: "tcp4", address: "0.0.0.0:8080"}) {
+		t.Fatalf("unexpected restricted IPv4 listener specification: %+v", namespaceListenerSpecs[2])
+	}
+	if namespaceListenerSpecs[3] != (listenerSpec{network: "tcp6", address: "[::]:8080"}) {
+		t.Fatalf("unexpected restricted IPv6 listener specification: %+v", namespaceListenerSpecs[3])
 	}
 }
 
@@ -457,6 +468,15 @@ func assertConnectivity(t *testing.T, namespace string, expected bool) {
 	for _, address := range []string{protectedIPv4, protectedIPv6} {
 		if actual := namespaceCanConnect(namespace, address); actual != expected {
 			t.Fatalf("connectivity to %s: got %t, expected %t", address, actual, expected)
+		}
+	}
+}
+
+func assertRestrictedServiceBlocked(t *testing.T, namespace string) {
+	t.Helper()
+	for _, address := range []string{blockedIPv4, blockedIPv6} {
+		if namespaceCanConnect(namespace, address) {
+			t.Fatalf("restrictive host policy no longer blocks %s", address)
 		}
 	}
 }
