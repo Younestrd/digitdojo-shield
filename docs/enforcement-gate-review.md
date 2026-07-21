@@ -4,7 +4,7 @@ Status: **closed**. The public firewall controller must remain enforcement-disab
 
 ## Evidence reviewed
 
-GitHub Actions run [#4](https://github.com/Younestrd/digitdojo-shield/actions/runs/29841643232), for commit `588d75562895b0094f6a9d17be01e8f9a217161b`, completed successfully on the GitHub-hosted `ubuntu-24.04` runner. Its `nftables` job installed nftables and iproute2, passed the capability preflight, unit tests, static analysis, and `go test -tags=integration -count=20 -v ./internal/firewall`. The retained `firewall-integration-29841643232` artifact is available until 2026-10-19.
+GitHub Actions run [#6](https://github.com/Younestrd/digitdojo-shield/actions/runs/29845007267), for commit `b4b9ce43701fb1ce51b28d61be0039c2ab435898`, completed successfully on the GitHub-hosted `ubuntu-24.04` runner with nftables 1.0.9. Its `nftables` job installed nftables and iproute2, passed the capability preflight, unit tests, static analysis, and `go test -tags=integration -count=20 -v ./internal/firewall`. The retained `firewall-integration-29845007267` artifact is available until 2026-10-19. The original baseline evidence remains in successful run [#4](https://github.com/Younestrd/digitdojo-shield/actions/runs/29841643232).
 
 This evidence proves the original namespace suite only. It is not evidence for Docker, Pterodactyl, other distributions, a production host's existing policy, or the full uninstall script unless the corresponding tests below are present in the successful run.
 
@@ -19,9 +19,9 @@ Every item must be checked by a retained, successful Linux CI artifact before an
 - [x] Whitelist precedence over Shield permanent and temporary ban sets.
 - [x] Temporary set elements expire in the kernel without reconciliation.
 - [x] Idempotent reconcile and cleanup in the original 20-run suite.
-- [ ] Restrictive pre-existing host firewall coexistence, including non-SSH traffic; added to the suite but not yet run in CI.
-- [ ] Docker-style nftables NAT/forward table preservation; added to the suite but not yet run in CI.
-- [ ] Full `install/uninstall.sh` execution in an isolated Linux mount and network namespace; added to the suite but not yet run in CI.
+- [x] Restrictive pre-existing host firewall coexistence, including IPv6 Neighbor Discovery and SSH; passed 20 times in run #6.
+- [x] Docker-style nftables NAT/forward table preservation; passed 20 times in run #6.
+- [x] Full `install/uninstall.sh` execution in an isolated Linux mount and network namespace; passed 20 times in run #6.
 - [ ] Ubuntu version matrix: supported minimum and current releases.
 - [ ] Debian version matrix: supported minimum and current releases.
 - [ ] Real Docker Engine integration (container publishing, NAT, bridge networking, and restart) on a supported host.
@@ -33,7 +33,7 @@ Every item must be checked by a retained, successful Linux CI artifact before an
 
 | Environment | Status | Evidence / boundary |
 | --- | --- | --- |
-| Ubuntu 24.04 with nftables >= 1.0.9 | validation candidate only | One GitHub-hosted Ubuntu 24.04 run passed the original suite 20 times. The new coexistence and full-uninstall coverage is pending. |
+| Ubuntu 24.04 with nftables 1.0.9 | validation candidate only | GitHub Actions run #6 passed the expanded suite 20 times. This is not a release-matrix commitment. |
 | Ubuntu 22.04 or other Ubuntu releases | unsupported | No retained matrix evidence. |
 | Debian (any release) | unsupported | No retained Debian kernel or nftables userspace evidence. |
 | nftables < 1.0.9 | unsupported | The runtime rejects it. |
@@ -45,12 +45,11 @@ All candidates also require Linux, `CAP_NET_ADMIN`, an nftables-compatible kerne
 
 ## Remaining activation risks
 
-1. nftables base-chain priority and verdict interactions with an administrator's existing host policy have not yet passed the new restrictive-policy test.
-2. Docker and Pterodactyl traffic commonly traverses NAT and forward hooks, while the current backend creates an input hook only. Preservation does not demonstrate protection of published container ports.
-3. The original CI evidence covers one GitHub runner image, not supported Ubuntu/Debian release or kernel matrices.
-4. The original CI covered firewall cleanup but not the script's systemd, binary, configuration, log, and state removal paths.
-5. The system-wide uninstall removes configuration, logs, and persisted state; its operator confirmation, backup/retention policy, and recovery contract need explicit product approval.
-6. The backend replaces its own whole table on reconciliation. That is safe only while Shield is the sole owner; extensions must never write into that table independently.
+1. Docker and Pterodactyl traffic commonly traverses NAT and forward hooks, while the current backend creates an input hook only. Synthetic table preservation does not demonstrate protection of published container ports.
+2. The retained CI evidence covers one GitHub runner image, not supported Ubuntu/Debian release or kernel matrices.
+3. The staged full-uninstall test proves the script removes its intended files and Shield table without affecting unrelated nftables objects. It does not prove shutdown of an active systemd service or backup/retention expectations on a production host.
+4. The system-wide uninstall removes configuration, logs, and persisted state; its operator confirmation, backup/retention policy, and recovery contract need explicit product approval.
+5. The backend replaces its own whole table on reconciliation. That is safe only while Shield is the sole owner; extensions must never write into that table independently.
 
 ## Gate decision
 
