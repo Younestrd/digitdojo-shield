@@ -115,6 +115,7 @@ func TestNFTablesLinuxIntegration(t *testing.T) {
 	unrelatedProgram := []byte(`add table inet preexisting_test
 add set inet preexisting_test marker { type ipv4_addr; elements = { 198.51.100.10 }; }
 add chain inet preexisting_test input { type filter hook input priority 0; policy drop; }
+add rule inet preexisting_test input ip6 nexthdr icmpv6 accept
 add rule inet preexisting_test input tcp dport 22 accept
 add table ip docker_test
 add chain ip docker_test prerouting { type nat hook prerouting priority dstnat; policy accept; }
