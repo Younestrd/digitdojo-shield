@@ -343,7 +343,7 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	runDocker(t, ctx, "network", "create", "--driver", "bridge", networkName)
 	runDocker(t, ctx, "run", "--detach", "--name", containerName, "--network", networkName, "--publish", "127.0.0.1::80", "nginx:1.27-alpine")
 	publishedAddress := dockerPublishedAddress(t, ctx, containerName)
-	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
 
 	dockerRulesBefore := commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset")
 	requireDockerManagedNFTables(t, dockerRulesBefore)
@@ -357,22 +357,22 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	if err := controller.Reconcile(ctx, state); err != nil {
 		t.Fatalf("reconcile Shield state alongside Docker: %v", err)
 	}
-	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 
 	runDocker(t, ctx, "restart", containerName)
-	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 
 	runDocker(t, ctx, "stop", containerName)
-	assertHostCanConnect(t, publishedAddress, false)
+	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, false)
 	runDocker(t, ctx, "start", containerName)
-	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
 
 	if err := controller.Reconcile(ctx, backend.DesiredState{TemporaryBans: []backend.TemporaryBan{{Address: netip.MustParseAddr("198.51.100.241"), ExpiresAt: time.Now().Add(time.Minute)}}}); err != nil {
 		t.Fatalf("update Shield state while Docker container is running: %v", err)
 	}
-	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 
 	uninstallScript, pathErr := filepath.Abs(filepath.Join("..", "..", "install", "uninstall.sh"))
@@ -380,7 +380,7 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 		t.Fatalf("resolve uninstall script: %v", pathErr)
 	}
 	runStagedHostUninstall(t, ctx, uninstallScript)
-	assertHostCanConnect(t, publishedAddress, true)
+	assertDockerPublishedPort(t, ctx, containerName, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 }
 
@@ -581,6 +581,21 @@ func dockerPublishedAddress(t *testing.T, ctx context.Context, container string)
 
 func assertHostCanConnect(t *testing.T, address string, expected bool) {
 	t.Helper()
+	if err := hostConnectivityError(address, expected); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertDockerPublishedPort(t *testing.T, ctx context.Context, container, address string, expected bool) {
+	t.Helper()
+	if err := hostConnectivityError(address, expected); err != nil {
+		inspect, _ := exec.CommandContext(ctx, "docker", "inspect", container).CombinedOutput()
+		logs, _ := exec.CommandContext(ctx, "docker", "logs", container).CombinedOutput()
+		t.Fatalf("%v\nDocker inspect:\n%s\nDocker logs:\n%s", err, inspect, logs)
+	}
+}
+
+func hostConnectivityError(address string, expected bool) error {
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		connection, err := net.DialTimeout("tcp", address, 500*time.Millisecond)
@@ -588,10 +603,10 @@ func assertHostCanConnect(t *testing.T, address string, expected bool) {
 			_ = connection.Close()
 		}
 		if (err == nil) == expected {
-			return
+			return nil
 		}
 		if !expected || time.Now().After(deadline) {
-			t.Fatalf("published container connectivity to %s: got %t, expected %t (error=%v)", address, err == nil, expected, err)
+			return fmt.Errorf("published container connectivity to %s: got %t, expected %t (error=%v)", address, err == nil, expected, err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
