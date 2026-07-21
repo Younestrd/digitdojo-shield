@@ -357,25 +357,28 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	if err := controller.Reconcile(ctx, state); err != nil {
 		t.Fatalf("reconcile Shield state alongside Docker: %v", err)
 	}
+	shieldRules := normalizeNFTJSON(t, commandOutput(t, ctx, nil, "nft", "--json", "list", "table", "inet", shieldTable))
 	assertDockerPublishedPort(t, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 
 	runDocker(t, ctx, "restart", containerName)
 	publishedAddress = dockerPublishedAddress(t, ctx, containerName)
 	assertDockerPublishedPort(t, publishedAddress, true)
-	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
+	assertShieldRulesUnchanged(t, shieldRules, commandOutput(t, ctx, nil, "nft", "--json", "list", "table", "inet", shieldTable))
 
 	runDocker(t, ctx, "stop", containerName)
 	assertDockerPublishedPort(t, publishedAddress, false)
 	runDocker(t, ctx, "start", containerName)
 	publishedAddress = dockerPublishedAddress(t, ctx, containerName)
 	assertDockerPublishedPort(t, publishedAddress, true)
+	assertShieldRulesUnchanged(t, shieldRules, commandOutput(t, ctx, nil, "nft", "--json", "list", "table", "inet", shieldTable))
+	dockerRulesBeforeUpdate := commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset")
 
 	if err := controller.Reconcile(ctx, backend.DesiredState{TemporaryBans: []backend.TemporaryBan{{Address: netip.MustParseAddr("198.51.100.241"), ExpiresAt: time.Now().Add(time.Minute)}}}); err != nil {
 		t.Fatalf("update Shield state while Docker container is running: %v", err)
 	}
 	assertDockerPublishedPort(t, publishedAddress, true)
-	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
+	assertDockerRulesUnchanged(t, dockerRulesBeforeUpdate, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 
 	uninstallScript, pathErr := filepath.Abs(filepath.Join("..", "..", "install", "uninstall.sh"))
 	if pathErr != nil {
@@ -383,7 +386,7 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	}
 	runStagedHostUninstall(t, ctx, uninstallScript)
 	assertDockerPublishedPort(t, publishedAddress, true)
-	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
+	assertDockerRulesUnchanged(t, dockerRulesBeforeUpdate, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 }
 
 func TestNamespaceListener(t *testing.T) {
@@ -623,6 +626,13 @@ func assertDockerRulesUnchanged(t *testing.T, expected, actual []byte) {
 	t.Helper()
 	if !bytes.Equal(withoutShieldNFTObjects(t, expected), withoutShieldNFTObjects(t, actual)) {
 		t.Fatal("Shield operation changed Docker-managed or other host nftables objects")
+	}
+}
+
+func assertShieldRulesUnchanged(t *testing.T, expected, actual []byte) {
+	t.Helper()
+	if !bytes.Equal(expected, normalizeNFTJSON(t, actual)) {
+		t.Fatal("Docker lifecycle operation changed Shield-managed nftables objects")
 	}
 }
 
