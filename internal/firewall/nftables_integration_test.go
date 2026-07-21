@@ -114,13 +114,19 @@ func TestNFTablesLinuxIntegration(t *testing.T) {
 	runner := namespaceRunner{namespace: protectedNamespace}
 	unrelatedProgram := []byte(`add table inet preexisting_test
 add set inet preexisting_test marker { type ipv4_addr; elements = { 198.51.100.10 }; }
-add chain inet preexisting_test input { type filter hook input priority 0; policy accept; }
+add chain inet preexisting_test input { type filter hook input priority 0; policy drop; }
 add rule inet preexisting_test input tcp dport 22 accept
+add table ip docker_test
+add chain ip docker_test prerouting { type nat hook prerouting priority dstnat; policy accept; }
+add chain ip docker_test forward { type filter hook forward priority filter; policy accept; }
+add rule ip docker_test prerouting ip protocol tcp counter
+add rule ip docker_test forward counter
 `)
 	if _, err := runner.Run(ctx, []string{"--file", "-"}, unrelatedProgram); err != nil {
 		t.Fatalf("create pre-existing firewall state: %v", err)
 	}
 	unrelatedBefore := namespaceNFT(t, ctx, protectedNamespace, "--json", "list", "table", "inet", "preexisting_test")
+	dockerBefore := namespaceNFT(t, ctx, protectedNamespace, "--json", "list", "table", "ip", "docker_test")
 
 	stopListener := startNamespaceListener(t, ctx, protectedNamespace)
 	defer stopListener()
@@ -138,6 +144,7 @@ add rule inet preexisting_test input tcp dport 22 accept
 		}
 		assertConnectivity(t, clientNamespace, true)
 		assertUnrelatedUnchanged(t, ctx, protectedNamespace, unrelatedBefore)
+		assertDockerUnchanged(t, ctx, protectedNamespace, dockerBefore)
 	})
 
 	t.Run("repeated apply is idempotent", func(t *testing.T) {
@@ -162,6 +169,7 @@ add rule inet preexisting_test input tcp dport 22 accept
 			}
 		}
 		assertUnrelatedUnchanged(t, ctx, protectedNamespace, unrelatedBefore)
+		assertDockerUnchanged(t, ctx, protectedNamespace, dockerBefore)
 	})
 
 	t.Run("whitelist overrides both ban types", func(t *testing.T) {
@@ -178,6 +186,8 @@ add rule inet preexisting_test input tcp dport 22 accept
 			t.Fatalf("reconcile whitelist precedence: %v", err)
 		}
 		assertConnectivity(t, clientNamespace, true)
+		assertUnrelatedUnchanged(t, ctx, protectedNamespace, unrelatedBefore)
+		assertDockerUnchanged(t, ctx, protectedNamespace, dockerBefore)
 		state.Whitelist = nil
 		if err := controller.Reconcile(ctx, state); err != nil {
 			t.Fatalf("remove whitelist: %v", err)
@@ -227,6 +237,8 @@ add rule inet preexisting_test input tcp dport 22 accept
 			t.Fatalf("rollback did not restore the prior Shield state")
 		}
 		assertConnectivity(t, clientNamespace, true)
+		assertUnrelatedUnchanged(t, ctx, protectedNamespace, unrelatedBefore)
+		assertDockerUnchanged(t, ctx, protectedNamespace, dockerBefore)
 	})
 
 	t.Run("invalid transaction commits nothing", func(t *testing.T) {
@@ -268,6 +280,28 @@ add rule inet preexisting_test input tcp dport 22 accept
 			t.Fatalf("Shield table survived cleanup")
 		}
 		assertUnrelatedUnchanged(t, ctx, protectedNamespace, unrelatedBefore)
+		assertDockerUnchanged(t, ctx, protectedNamespace, dockerBefore)
+		assertConnectivity(t, clientNamespace, true)
+	})
+
+	t.Run("full uninstall removes staged Shield files and no other firewall objects", func(t *testing.T) {
+		if err := controller.Reconcile(ctx, backend.DesiredState{}); err != nil {
+			t.Fatalf("recreate Shield state before full uninstall: %v", err)
+		}
+		uninstallScript, pathErr := filepath.Abs(filepath.Join("..", "..", "install", "uninstall.sh"))
+		if pathErr != nil {
+			t.Fatalf("resolve uninstall script: %v", pathErr)
+		}
+		runStagedUninstall(t, ctx, protectedNamespace, uninstallScript)
+		tables, err := runner.Run(ctx, []string{"list", "tables"}, nil)
+		if err != nil {
+			t.Fatalf("list tables after full uninstall: %v", err)
+		}
+		if bytes.Contains(tables, []byte("digitdojo_shield")) {
+			t.Fatalf("Shield table survived full uninstall")
+		}
+		assertUnrelatedUnchanged(t, ctx, protectedNamespace, unrelatedBefore)
+		assertDockerUnchanged(t, ctx, protectedNamespace, dockerBefore)
 		assertConnectivity(t, clientNamespace, true)
 	})
 }
@@ -442,6 +476,36 @@ func assertUnrelatedUnchanged(t *testing.T, ctx context.Context, namespace strin
 	if !bytes.Equal(normalizeNFTJSON(t, expected), normalizeNFTJSON(t, actual)) {
 		t.Fatalf("unrelated nftables state changed")
 	}
+}
+
+func assertDockerUnchanged(t *testing.T, ctx context.Context, namespace string, expected []byte) {
+	t.Helper()
+	actual := namespaceNFT(t, ctx, namespace, "--json", "list", "table", "ip", "docker_test")
+	if !bytes.Equal(normalizeNFTJSON(t, expected), normalizeNFTJSON(t, actual)) {
+		t.Fatalf("Docker-style nftables state changed")
+	}
+}
+
+func runStagedUninstall(t *testing.T, ctx context.Context, namespace, uninstallScript string) {
+	t.Helper()
+	// A private mount namespace prevents the test from touching the runner's
+	// /etc, /usr/local, and /var while exercising the production uninstall script.
+	const script = `set -euo pipefail
+mount --make-rprivate /
+mount -t tmpfs tmpfs /etc
+mount -t tmpfs tmpfs /usr/local
+mount -t tmpfs tmpfs /var
+mkdir -p /etc/systemd/system /etc/digitdojo-shield /var/log/digitdojo-shield /var/lib/digitdojo-shield /usr/local/bin
+touch /etc/systemd/system/digitdojo-shield.service /etc/digitdojo-shield/config.yml /var/log/digitdojo-shield/shield.log /var/lib/digitdojo-shield/state.json /usr/local/bin/shield /usr/local/bin/shieldd
+bash "$1"
+test ! -e /etc/systemd/system/digitdojo-shield.service
+test ! -e /etc/digitdojo-shield
+test ! -e /var/log/digitdojo-shield
+test ! -e /var/lib/digitdojo-shield
+test ! -e /usr/local/bin/shield
+test ! -e /usr/local/bin/shieldd
+`
+	runCommand(t, ctx, "ip", "netns", "exec", namespace, "unshare", "--mount", "--propagation", "private", "bash", "-ceu", script, "shield-uninstall", uninstallScript)
 }
 
 func normalizeNFTJSON(t *testing.T, input []byte) []byte {
