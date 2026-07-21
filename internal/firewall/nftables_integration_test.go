@@ -343,6 +343,7 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	runDocker(t, ctx, "network", "create", "--driver", "bridge", networkName)
 	runDocker(t, ctx, "run", "--detach", "--name", containerName, "--network", networkName, "--publish", "0.0.0.0::80", "nginx:1.27-alpine")
 	publishedAddress := dockerPublishedAddress(t, ctx, containerName)
+	t.Logf("Docker published address after create: %s", publishedAddress)
 	assertDockerPublishedPort(t, publishedAddress, true)
 
 	dockerRulesBefore := commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset")
@@ -357,19 +358,24 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 	if err := controller.Reconcile(ctx, state); err != nil {
 		t.Fatalf("reconcile Shield state alongside Docker: %v", err)
 	}
+	t.Log("Shield reconciliation alongside Docker succeeded")
 	shieldRules := normalizeNFTJSON(t, commandOutput(t, ctx, nil, "nft", "--json", "list", "table", "inet", shieldTable))
 	assertDockerPublishedPort(t, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBefore, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 
 	runDocker(t, ctx, "restart", containerName)
+	previousAddress := publishedAddress
 	publishedAddress = dockerPublishedAddress(t, ctx, containerName)
+	t.Logf("Docker restart published address: %s (previous: %s)", publishedAddress, previousAddress)
 	assertDockerPublishedPort(t, publishedAddress, true)
 	assertShieldRulesUnchanged(t, shieldRules, commandOutput(t, ctx, nil, "nft", "--json", "list", "table", "inet", shieldTable))
 
 	runDocker(t, ctx, "stop", containerName)
 	assertDockerPublishedPort(t, publishedAddress, false)
 	runDocker(t, ctx, "start", containerName)
+	previousAddress = publishedAddress
 	publishedAddress = dockerPublishedAddress(t, ctx, containerName)
+	t.Logf("Docker start published address: %s (previous: %s)", publishedAddress, previousAddress)
 	assertDockerPublishedPort(t, publishedAddress, true)
 	assertShieldRulesUnchanged(t, shieldRules, commandOutput(t, ctx, nil, "nft", "--json", "list", "table", "inet", shieldTable))
 	dockerRulesBeforeUpdate := commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset")
@@ -385,6 +391,7 @@ func TestDockerEngineNFTablesIntegration(t *testing.T) {
 		t.Fatalf("resolve uninstall script: %v", pathErr)
 	}
 	runStagedHostUninstall(t, ctx, uninstallScript)
+	t.Log("Shield uninstall completed alongside running Docker container")
 	assertDockerPublishedPort(t, publishedAddress, true)
 	assertDockerRulesUnchanged(t, dockerRulesBeforeUpdate, commandOutput(t, ctx, nil, "nft", "--json", "list", "ruleset"))
 }
