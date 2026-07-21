@@ -62,8 +62,8 @@ still require correction before they can drive enforcement decisions.
 
 The privileged namespace suite is run by
 `.github/workflows/linux-firewall-integration.yml` on Ubuntu 24.04. It requires
-root and `CAP_NET_ADMIN`; compiling that suite on another platform does not
-count as kernel verification.
+Linux `CAP_NET_ADMIN` and `CAP_SYS_ADMIN`; compiling that suite on another
+platform does not count as kernel verification.
 
 See [GitHub Actions Linux validation](docs/github-actions-linux-validation.md)
 for remote configuration, runner requirements, workflow dispatch, and artifact
