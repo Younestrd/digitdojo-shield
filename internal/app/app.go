@@ -22,6 +22,7 @@ import (
 	"digitdojo-shield/internal/logger"
 	"digitdojo-shield/internal/monitor"
 	"digitdojo-shield/internal/storage"
+	"digitdojo-shield/internal/system"
 )
 
 const (
@@ -45,6 +46,7 @@ type Application struct {
 	monitor  *monitor.Monitor
 	events   *events.Bus
 	alerts   *alerts.Service
+	system   *system.Collector
 	api      *api.Server
 
 	statsMu sync.RWMutex
@@ -113,6 +115,7 @@ func New(cfg config.Config) (*Application, error) {
 		monitor:  monitor.New(),
 		events:   events.NewBus(),
 		alerts:   alertService,
+		system:   system.NewCollector(),
 		ready:    make(chan struct{}),
 	}
 	application.stats = api.RuntimeStats{
@@ -136,6 +139,7 @@ func New(cfg config.Config) (*Application, error) {
 		},
 		Subscribe: application.events.Subscribe,
 		History:   application.history,
+		System:    application.system.Collect,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("initialize API: %w", err))

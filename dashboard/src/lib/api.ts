@@ -1,4 +1,4 @@
-import type { Analytics, AttackPage, BlockedResponse, ShieldStats } from "@/lib/types";
+import type { Analytics, AttackPage, BlockedResponse, ShieldStats, SystemInventory } from "@/lib/types";
 
 const proxyBase = "/api/shield";
 
@@ -23,4 +23,5 @@ export const shieldAPI = {
   unban: (ip: string) => request<void>("/unban", { method: "POST", body: JSON.stringify({ ip }) }),
   attacks: (offset = 0, limit = 50) => request<AttackPage>(`/attacks?offset=${offset}&limit=${limit}`),
   analytics: (period: "24h" | "7d" | "30d") => request<Analytics>(`/analytics?period=${period}`),
+  system: () => request<SystemInventory>("/system"),
 };

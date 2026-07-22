@@ -18,6 +18,7 @@ import (
 	"digitdojo-shield/internal/config"
 	"digitdojo-shield/internal/events"
 	"digitdojo-shield/internal/history"
+	"digitdojo-shield/internal/system"
 	"digitdojo-shield/internal/whitelist"
 )
 
@@ -32,6 +33,7 @@ type Server struct {
 	removeBlacklist func(string) error
 	subscribe       func(func(events.Event)) func()
 	history         *history.Store
+	system          func(context.Context) (system.Inventory, error)
 	limiter         *rateLimiter
 	server          *http.Server
 	mu              sync.Mutex
@@ -62,6 +64,7 @@ type Dependencies struct {
 	RemoveBlacklist func(string) error
 	Subscribe       func(func(events.Event)) func()
 	History         *history.Store
+	System          func(context.Context) (system.Inventory, error)
 }
 
 // ErrEnforcementUnavailable indicates that a requested firewall mutation cannot
@@ -115,6 +118,7 @@ func newServer(cfg config.Config, deps Dependencies) *Server {
 		removeBlacklist: deps.RemoveBlacklist,
 		subscribe:       deps.Subscribe,
 		history:         deps.History,
+		system:          deps.System,
 		limiter:         newRateLimiter(rateLimit, burst),
 	}
 }
@@ -130,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/events", s.authMiddleware(s.handleEvents))
 	mux.HandleFunc("/attacks", s.authMiddleware(s.handleAttacks))
 	mux.HandleFunc("/analytics", s.authMiddleware(s.handleAnalytics))
+	mux.HandleFunc("/system", s.authMiddleware(s.handleSystem))
 	return mux
 }
 
@@ -229,6 +234,24 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"period": periodOrDefault(period), "metrics": metrics, "attack_count": attackCount, "unavailable_dimensions": []string{"protocols", "countries", "ports", "asns", "top_ips"}})
+}
+
+func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.system == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "system inventory is unavailable")
+		return
+	}
+	inventory, err := s.system(r.Context())
+	if err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, "collect system inventory: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(inventory)
 }
 
 func pagination(r *http.Request) (int, int, error) {
