@@ -20,3 +20,4 @@ export type ShieldConfig = { general:{log_dir:string;state_dir:string;host_based
 export type ConfigResponse = { config:ShieldConfig; secrets:Record<string,boolean>; history:{version:number;timestamp:string;checksum:string;summary:string}[] };
 export type LogEntry = { timestamp:string; level:"TRACE"|"DEBUG"|"INFO"|"WARN"|"ERROR"|"FATAL"; category:string; message:string; fields?:Record<string,string> };
 export type LogPage = { items:LogEntry[];total:number;offset:number;limit:number };
+export type AuditRecord = {id:string;timestamp:string;user:string;source_ip:string;action:string;resource:string;previous_value?:string;new_value?:string;result:string;request_id:string}; export type AuditPage={items:AuditRecord[];total:number;offset:number;limit:number};

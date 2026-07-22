@@ -1,4 +1,4 @@
-import type { Analytics, AttackPage, BlockedResponse, ConfigResponse, LogPage, ShieldConfig, ShieldStats, SystemInventory } from "@/lib/types";
+import type { Analytics, AttackPage, AuditPage, BlockedResponse, ConfigResponse, LogPage, ShieldConfig, ShieldStats, SystemInventory } from "@/lib/types";
 
 const proxyBase = "/api/shield";
 
@@ -29,4 +29,5 @@ export const shieldAPI = {
   reloadConfig: () => request<ConfigResponse>("/config/reload", { method:"POST" }),
   rollbackConfig: (version:number) => request<ConfigResponse>("/config/rollback", {method:"POST",body:JSON.stringify({version})}),
   logs: (params:URLSearchParams) => request<LogPage>(`/logs?${params}`),
+  audit: (params:URLSearchParams) => request<AuditPage>(`/audit?${params}`),
 };

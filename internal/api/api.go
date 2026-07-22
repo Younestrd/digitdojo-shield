@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"digitdojo-shield/internal/audit"
 	"digitdojo-shield/internal/blacklist"
 	"digitdojo-shield/internal/config"
 	"digitdojo-shield/internal/events"
@@ -37,6 +38,7 @@ type Server struct {
 	system          func(context.Context) (system.Inventory, error)
 	configs         *config.Manager
 	logs            *logger.Manager
+	audit           *audit.Manager
 	limiter         *rateLimiter
 	server          *http.Server
 	mu              sync.Mutex
@@ -70,6 +72,7 @@ type Dependencies struct {
 	System          func(context.Context) (system.Inventory, error)
 	Configs         *config.Manager
 	Logs            *logger.Manager
+	Audit           *audit.Manager
 }
 
 // ErrEnforcementUnavailable indicates that a requested firewall mutation cannot
@@ -126,6 +129,7 @@ func newServer(cfg config.Config, deps Dependencies) *Server {
 		system:          deps.System,
 		configs:         deps.Configs,
 		logs:            deps.Logs,
+		audit:           deps.Audit,
 		limiter:         newRateLimiter(rateLimit, burst),
 	}
 }
@@ -150,6 +154,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/logs/export", s.authMiddleware(s.handleLogExport))
 	mux.HandleFunc("/logs/clear", s.authMiddleware(s.handleLogClear))
 	mux.HandleFunc("/logs/stream", s.authMiddleware(s.handleLogStream))
+	mux.HandleFunc("/audit", s.authMiddleware(s.handleAudit))
+	mux.HandleFunc("/audit/export", s.authMiddleware(s.handleAuditExport))
+	mux.HandleFunc("/audit/stream", s.authMiddleware(s.handleAuditStream))
 	return mux
 }
 
@@ -286,9 +293,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		current := s.configs.Current()
 		preserveSecrets(&candidate, current)
 		if err := s.configs.Update(candidate, "API configuration update"); err != nil {
+			s.recordAudit(r, "config.update", "config", "redacted", "redacted", "failure")
 			s.writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		s.recordAudit(r, "config.update", "config", "redacted", "redacted", "success")
 		writeRedactedConfig(w, s.configs.Current(), s.configs.History())
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -304,9 +313,11 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.configs.Reload(); err != nil {
+		s.recordAudit(r, "config.reload", "config", "", "", "failure")
 		s.writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.recordAudit(r, "config.reload", "config", "", "", "success")
 	writeRedactedConfig(w, s.configs.Current(), s.configs.History())
 }
 func (s *Server) handleConfigRollback(w http.ResponseWriter, r *http.Request) {
@@ -326,9 +337,11 @@ func (s *Server) handleConfigRollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.configs.Rollback(request.Version); err != nil {
+		s.recordAudit(r, "config.rollback", "config", "", "", "failure")
 		s.writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.recordAudit(r, "config.rollback", "config", "", "", "success")
 	writeRedactedConfig(w, s.configs.Current(), s.configs.History())
 }
 func (s *Server) handleConfigSchema(w http.ResponseWriter, r *http.Request) {
@@ -361,6 +374,16 @@ func preserveSecrets(candidate *config.Config, current config.Config) {
 	if candidate.Alerts.Email == "" {
 		candidate.Alerts.Email = current.Alerts.Email
 	}
+}
+func (s *Server) recordAudit(r *http.Request, action, resource, previous, next, result string) {
+	if s.audit == nil {
+		return
+	}
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	if requestID == "" {
+		requestID, _ = audit.NewID()
+	}
+	_ = s.audit.Record(audit.Record{User: "api-token", SourceIP: clientKey(r), Action: action, Resource: resource, Previous: previous, New: next, Result: result, RequestID: requestID})
 }
 func configSchema() map[string]any {
 	return map[string]any{"type": "object", "sections": map[string]any{"detection": map[string]any{"packet_threshold": map[string]any{"type": "integer", "minimum": 1, "default": 2000, "description": "Packets per second required to signal a flood"}, "window_seconds": map[string]any{"type": "integer", "minimum": 1, "default": 30, "description": "Sampling interval; requires restart when changed"}}, "alerts": map[string]any{"discord_webhook": map[string]any{"type": "string", "secret": true, "description": "HTTPS Discord webhook"}, "slack_webhook": map[string]any{"type": "string", "secret": true, "description": "HTTPS Slack webhook"}}, "api": map[string]any{"enabled": map[string]any{"type": "boolean", "default": false}, "bind_address": map[string]any{"type": "string", "description": "Requires restart when changed"}}}}
@@ -503,6 +526,78 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 		case entry := <-channel:
 			data, _ := json.Marshal(entry)
 			_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.audit == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "audit manager is unavailable")
+		return
+	}
+	offset, limit, err := pagination(r)
+	if err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, total, err := s.audit.Query(audit.Query{Search: r.URL.Query().Get("search"), Action: r.URL.Query().Get("action"), Resource: r.URL.Query().Get("resource"), Result: r.URL.Query().Get("result"), Offset: offset, Limit: limit})
+	if err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "total": total, "offset": offset, "limit": limit})
+}
+func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.audit == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "audit manager is unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Content-Disposition", "attachment; filename=shield-audit.jsonl")
+	if err := s.audit.Export(audit.Query{Search: r.URL.Query().Get("search"), Action: r.URL.Query().Get("action"), Resource: r.URL.Query().Get("resource"), Result: r.URL.Query().Get("result")}, w); err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, err.Error())
+	}
+}
+func (s *Server) handleAuditStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.audit == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "audit manager is unavailable")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.writeJSONError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	channel := make(chan audit.Record, 32)
+	unsubscribe := s.audit.Subscribe(func(record audit.Record) {
+		select {
+		case channel <- record:
+		default:
+		}
+	})
+	defer unsubscribe()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case record := <-channel:
+			data, _ := json.Marshal(record)
+			_, _ = fmt.Fprintf(w, "event: audit\ndata: %s\n\n", data)
 			flusher.Flush()
 		}
 	}

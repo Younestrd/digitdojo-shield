@@ -6,7 +6,7 @@ import { Activity, BarChart3, Bell, BookOpenText, ChevronDown, CircleHelp, FileT
 import { useState } from "react";
 
 const navigation = [
-  ["Dashboard", "/", LayoutDashboard], ["Live Monitor", "/monitor", Activity], ["Attacks", "/attacks", Flame], ["Firewall", "/firewall", Shield], ["Analytics", "/analytics", BarChart3], ["Logs", "/logs", FileText], ["Alerts", "/alerts", Bell], ["Configuration", "/configuration", SlidersHorizontal], ["System", "/system", MonitorCog], ["Settings", "/settings", Settings],
+  ["Dashboard", "/", LayoutDashboard], ["Live Monitor", "/monitor", Activity], ["Attacks", "/attacks", Flame], ["Firewall", "/firewall", Shield], ["Analytics", "/analytics", BarChart3], ["Logs", "/logs", FileText], ["Audit Log", "/audit", BookOpenText], ["Alerts", "/alerts", Bell], ["Configuration", "/configuration", SlidersHorizontal], ["System", "/system", MonitorCog], ["Settings", "/settings", Settings],
 ] as const;
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
