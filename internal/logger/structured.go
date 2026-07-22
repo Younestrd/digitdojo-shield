@@ -16,6 +16,7 @@ type StructuredLogger struct {
 	file    *os.File
 	jsonOut bool
 	closed  bool
+	manager *Manager
 }
 
 // NewStructuredLogger creates a logger that can write JSON or plaintext entries.
@@ -32,7 +33,13 @@ func NewStructuredLogger(path string, jsonOut bool) (*StructuredLogger, error) {
 			_ = file.Close()
 			return nil, err
 		}
-		return &StructuredLogger{path: path, file: file, jsonOut: jsonOut}, nil
+		manager, err := NewManager(path, 10*1024*1024, 7)
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		_ = file.Close()
+		return &StructuredLogger{path: path, jsonOut: jsonOut, manager: manager}, nil
 	}
 	return &StructuredLogger{jsonOut: jsonOut}, nil
 }
@@ -56,6 +63,9 @@ func (l *StructuredLogger) Error(msg string, fields map[string]string) {
 func (l *StructuredLogger) Debug(msg string, fields map[string]string) {
 	l.write("DEBUG", msg, fields)
 }
+func (l *StructuredLogger) Trace(msg string, fields map[string]string) { l.write("TRACE", msg, fields) }
+func (l *StructuredLogger) Fatal(msg string, fields map[string]string) { l.write("FATAL", msg, fields) }
+func (l *StructuredLogger) Manager() *Manager                          { return l.manager }
 
 func (l *StructuredLogger) write(level, msg string, fields map[string]string) {
 	l.mu.Lock()
@@ -69,6 +79,14 @@ func (l *StructuredLogger) write(level, msg string, fields map[string]string) {
 			continue
 		}
 		payload[k] = v
+	}
+	if l.manager != nil {
+		category := fields["category"]
+		if category == "" {
+			category = "Runtime"
+		}
+		_ = l.manager.Write(Entry{Timestamp: time.Now().UTC(), Level: level, Category: category, Message: msg, Fields: fields})
+		return
 	}
 	if l.jsonOut {
 		data, _ := json.Marshal(payload)

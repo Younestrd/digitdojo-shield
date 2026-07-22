@@ -160,6 +160,7 @@ func newApplication(cfg config.Config, configs *config.Manager) (*Application, e
 		History:   application.history,
 		System:    application.system.Collect,
 		Configs:   application.configs,
+		Logs:      application.logger.Manager(),
 	})
 	if err != nil {
 		return fail(fmt.Errorf("initialize API: %w", err))
@@ -345,6 +346,10 @@ func (a *Application) handleDetectorError(err error) {
 func (a *Application) logEvent(event events.Event) {
 	fields := make(map[string]string, len(event.Payload)+1)
 	fields["event_type"] = event.Type
+	fields["category"] = "Runtime"
+	if event.Type == eventRuntimeError {
+		fields["category"] = "Detection"
+	}
 	for key, value := range event.Payload {
 		fields[key] = value
 	}

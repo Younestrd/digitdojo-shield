@@ -18,6 +18,7 @@ import (
 	"digitdojo-shield/internal/config"
 	"digitdojo-shield/internal/events"
 	"digitdojo-shield/internal/history"
+	"digitdojo-shield/internal/logger"
 	"digitdojo-shield/internal/system"
 	"digitdojo-shield/internal/whitelist"
 )
@@ -35,6 +36,7 @@ type Server struct {
 	history         *history.Store
 	system          func(context.Context) (system.Inventory, error)
 	configs         *config.Manager
+	logs            *logger.Manager
 	limiter         *rateLimiter
 	server          *http.Server
 	mu              sync.Mutex
@@ -67,6 +69,7 @@ type Dependencies struct {
 	History         *history.Store
 	System          func(context.Context) (system.Inventory, error)
 	Configs         *config.Manager
+	Logs            *logger.Manager
 }
 
 // ErrEnforcementUnavailable indicates that a requested firewall mutation cannot
@@ -122,6 +125,7 @@ func newServer(cfg config.Config, deps Dependencies) *Server {
 		history:         deps.History,
 		system:          deps.System,
 		configs:         deps.Configs,
+		logs:            deps.Logs,
 		limiter:         newRateLimiter(rateLimit, burst),
 	}
 }
@@ -142,6 +146,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/config/reload", s.authMiddleware(s.handleConfigReload))
 	mux.HandleFunc("/config/schema", s.authMiddleware(s.handleConfigSchema))
 	mux.HandleFunc("/config/rollback", s.authMiddleware(s.handleConfigRollback))
+	mux.HandleFunc("/logs", s.authMiddleware(s.handleLogs))
+	mux.HandleFunc("/logs/export", s.authMiddleware(s.handleLogExport))
+	mux.HandleFunc("/logs/clear", s.authMiddleware(s.handleLogClear))
+	mux.HandleFunc("/logs/stream", s.authMiddleware(s.handleLogStream))
 	return mux
 }
 
@@ -381,6 +389,123 @@ func periodOrDefault(value string) string {
 		return "24h"
 	}
 	return value
+}
+
+func (s *Server) logQuery(r *http.Request) (logger.Query, error) {
+	offset, limit, err := pagination(r)
+	if err != nil {
+		return logger.Query{}, err
+	}
+	query := logger.Query{Search: r.URL.Query().Get("search"), Level: r.URL.Query().Get("level"), Category: r.URL.Query().Get("category"), Offset: offset, Limit: limit, Desc: r.URL.Query().Get("sort") != "asc"}
+	for name, target := range map[string]*time.Time{"from": &query.From, "to": &query.To} {
+		if value := r.URL.Query().Get(name); value != "" {
+			parsed, error := time.Parse(time.RFC3339, value)
+			if error != nil {
+				return logger.Query{}, fmt.Errorf("%s must be RFC3339", name)
+			}
+			*target = parsed
+		}
+	}
+	return query, nil
+}
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.logs == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "log manager is unavailable")
+		return
+	}
+	query, err := s.logQuery(r)
+	if err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	entries, total, err := s.logs.Query(query)
+	if err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": entries, "total": total, "offset": query.Offset, "limit": query.Limit})
+}
+func (s *Server) handleLogExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.logs == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "log manager is unavailable")
+		return
+	}
+	query, err := s.logQuery(r)
+	if err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "json"
+	}
+	if format != "json" && format != "txt" {
+		s.writeJSONError(w, http.StatusBadRequest, "format must be json or txt")
+		return
+	}
+	w.Header().Set("Content-Type", map[string]string{"json": "application/x-ndjson", "txt": "text/plain"}[format])
+	w.Header().Set("Content-Disposition", "attachment; filename=shield-logs."+format)
+	if err := s.logs.Export(query, format, w); err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, err.Error())
+	}
+}
+func (s *Server) handleLogClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.logs == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "log manager is unavailable")
+		return
+	}
+	if err := s.logs.Clear(); err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.logs == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "log manager is unavailable")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.writeJSONError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	channel := make(chan logger.Entry, 32)
+	unsubscribe := s.logs.Subscribe(func(entry logger.Entry) {
+		select {
+		case channel <- entry:
+		default:
+		}
+	})
+	defer unsubscribe()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case entry := <-channel:
+			data, _ := json.Marshal(entry)
+			_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
 }
 
 // Serve listens on the configured bind address.
