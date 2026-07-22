@@ -80,9 +80,36 @@ type Event struct {
 	Message  string
 	Fields   map[string]string
 }
+type HealthStatus string
+
+const (
+	Healthy              HealthStatus = "healthy"
+	Unreachable          HealthStatus = "unreachable"
+	AuthenticationFailed HealthStatus = "authentication_failed"
+	RateLimited          HealthStatus = "rate_limited"
+	TimedOut             HealthStatus = "timeout"
+	Disabled             HealthStatus = "disabled"
+)
+
+type Health struct {
+	Status    HealthStatus `json:"status"`
+	CheckedAt time.Time    `json:"checked_at"`
+	Error     string       `json:"error,omitempty"`
+}
+type Notification struct {
+	Event    string
+	Severity string
+	Message  string
+	Fields   map[string]string
+}
+
+// Transport owns a real provider connection and its complete lifecycle.
 type Transport interface {
 	Validate(context.Context, json.RawMessage) error
-	Send(context.Context, json.RawMessage, string) error
+	Send(context.Context, json.RawMessage, Notification) error
+	Test(context.Context, json.RawMessage) error
+	Health(context.Context, json.RawMessage) Health
+	Close() error
 }
 
 func NewManager(path string, transports map[ProviderType]Transport) (*Manager, error) {
@@ -157,7 +184,7 @@ func (m *Manager) deliver(ctx context.Context, rule Rule, provider Provider, eve
 	var err error
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
-		err = transport.Send(attemptCtx, provider.Secret, event.Message)
+		err = transport.Send(attemptCtx, provider.Secret, Notification{Event: event.Type, Severity: event.Severity, Message: event.Message, Fields: event.Fields})
 		cancel()
 		if err == nil {
 			delivery.Result = "delivered"
