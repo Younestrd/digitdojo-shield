@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyShieldToken } from "@/lib/server-api";
 
+function isSecureRequest(request: NextRequest): boolean {
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim().toLowerCase();
+  return forwardedProto === "https" || request.nextUrl.protocol === "https:";
+}
+
 export async function POST(request: NextRequest) {
   const payload = (await request.json().catch(() => null)) as { token?: unknown } | null;
   const token = typeof payload?.token === "string" ? payload.token.trim() : "";
@@ -11,12 +16,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Shield API is unreachable" }, { status: 503 });
   }
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("shield_session", token, { httpOnly: true, sameSite: "strict", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 12 });
+  response.cookies.set("shield_session", token, { httpOnly: true, sameSite: "strict", secure: isSecureRequest(request), path: "/", maxAge: 60 * 60 * 12 });
   return response;
 }
 
-export async function DELETE() {
+export async function DELETE(request: NextRequest) {
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("shield_session", "", { httpOnly: true, sameSite: "strict", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 0 });
+  response.cookies.set("shield_session", "", { httpOnly: true, sameSite: "strict", secure: isSecureRequest(request), path: "/", maxAge: 0 });
   return response;
 }
