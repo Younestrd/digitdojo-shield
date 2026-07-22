@@ -127,6 +127,7 @@ func New(cfg config.Config) (*Application, error) {
 		RemoveBlacklist: func(string) error {
 			return fmt.Errorf("%w: unban changes are disabled until the privileged Linux firewall integration gate passes", api.ErrEnforcementUnavailable)
 		},
+		Subscribe: application.events.Subscribe,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("initialize API: %w", err))

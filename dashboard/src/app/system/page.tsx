@@ -1,0 +1,2 @@
+import { CapabilityNotice } from "@/components/capability-notice"; import { DashboardShell } from "@/components/dashboard-shell"; import { PageHeader } from "@/components/page-header";
+export default function SystemPage() { return <DashboardShell><PageHeader title="System" description="Host health, network interfaces, and Shield runtime dependencies."/><CapabilityNotice capability="System inventory" detail="Shield does not expose host, kernel, process, disk, load, or network-interface details through its API."/></DashboardShell>; }

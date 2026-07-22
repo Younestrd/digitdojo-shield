@@ -1,0 +1,2 @@
+"use client";
+export default function Error({ reset }: { error: Error; reset: () => void }) { return <main className="grid min-h-screen place-items-center p-6"><section className="surface max-w-md rounded-2xl p-6"><h1 className="text-xl font-semibold">Console error</h1><p className="mt-2 text-sm text-[var(--muted)]">An unexpected dashboard error occurred. The Shield daemon was not modified.</p><button onClick={reset} className="mt-5 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[#06101e]">Try again</button></section></main>; }

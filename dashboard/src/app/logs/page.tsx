@@ -1,0 +1,2 @@
+import { CapabilityNotice } from "@/components/capability-notice"; import { DashboardShell } from "@/components/dashboard-shell"; import { PageHeader } from "@/components/page-header";
+export default function LogsPage() { return <DashboardShell><PageHeader title="Logs" description="Search and export structured daemon events."/><CapabilityNotice capability="Remote log query" detail="Shield writes structured runtime logs locally but does not currently expose a paginated, authenticated log-reading API."/></DashboardShell>; }

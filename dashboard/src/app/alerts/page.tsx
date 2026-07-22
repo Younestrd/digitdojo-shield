@@ -1,0 +1,2 @@
+import { CapabilityNotice } from "@/components/capability-notice"; import { DashboardShell } from "@/components/dashboard-shell"; import { PageHeader } from "@/components/page-header";
+export default function AlertsPage() { return <DashboardShell><PageHeader title="Alerts" description="Configure and verify notification delivery."/><CapabilityNotice capability="Alert management" detail="The backend accepts alert configuration at startup but does not expose safe runtime configuration or test-delivery endpoints."/></DashboardShell>; }

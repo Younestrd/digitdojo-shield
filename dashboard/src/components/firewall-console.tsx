@@ -1,0 +1,14 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Ban, Plus, RefreshCw } from "lucide-react";
+import { FormEvent, useState } from "react";
+import { shieldAPI } from "@/lib/api";
+
+export function FirewallConsole() {
+  const [ip, setIP] = useState(""); const client = useQueryClient();
+  const blocked = useQuery({ queryKey: ["shield", "blocked"], queryFn: shieldAPI.blocked });
+  const mutation = useMutation({ mutationFn: shieldAPI.unban, onSuccess: () => client.invalidateQueries({ queryKey: ["shield", "blocked"] }) });
+  function submit(event: FormEvent) { event.preventDefault(); if (ip.trim()) mutation.mutate(ip.trim()); }
+  return <section className="surface rounded-2xl"><div className="flex flex-col gap-4 border-b border-[var(--border)] p-5 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold">Blocked addresses</h2><p className="mt-1 text-sm text-[var(--muted)]">The daemon’s current block list. Enforcement status is reported by the daemon.</p></div><button onClick={() => blocked.refetch()} className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-white/5"><RefreshCw size={16}/>Refresh</button></div><div className="p-5">{blocked.isLoading ? <p className="muted text-sm">Loading live firewall state…</p> : blocked.isError ? <p className="text-sm text-[var(--danger)]">{blocked.error instanceof Error ? blocked.error.message : "Unable to load blocked addresses."}</p> : <><div className="mb-5 flex flex-wrap gap-2">{blocked.data?.blocked.length ? blocked.data.blocked.map((address) => <form key={address} onSubmit={submit} className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-black/15 px-3 py-2 text-sm"><Ban size={14} className="text-[var(--danger)]"/>{address}<button type="button" onClick={() => mutation.mutate(address)} className="ml-2 text-xs text-[var(--accent)]">Unblock</button></form>) : <p className="text-sm text-[var(--muted)]">No addresses are currently blocked.</p>}</div><form onSubmit={submit} className="flex max-w-md gap-2"><input value={ip} onChange={(event) => setIP(event.target.value)} placeholder="Address to unblock" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[#0b1320] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"/><button disabled={mutation.isPending} className="inline-flex items-center gap-2 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-[#06101e] disabled:opacity-50"><Plus size={16}/>Unblock</button></form>{mutation.isError && <p className="mt-3 text-sm text-[var(--danger)]">{mutation.error.message}</p>}<p className="mt-3 text-xs text-[var(--muted)]">Shield currently controls whether mutations are allowed; this console never bypasses the daemon’s enforcement gate.</p></>}</div></section>;
+}

@@ -1,0 +1,1 @@
+export default function Loading() { return <main className="grid min-h-screen place-items-center"><div className="surface rounded-2xl px-5 py-4 text-sm text-[var(--muted)]">Loading DigitDojo Shield…</div></main>; }

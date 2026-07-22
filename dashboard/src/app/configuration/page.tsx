@@ -1,0 +1,2 @@
+import { CapabilityNotice } from "@/components/capability-notice"; import { DashboardShell } from "@/components/dashboard-shell"; import { PageHeader } from "@/components/page-header";
+export default function ConfigurationPage() { return <DashboardShell><PageHeader title="Configuration" description="Validate and manage Shield daemon settings."/><CapabilityNotice capability="Configuration management" detail="The daemon has no authenticated configuration read/write API. Editing files from a web browser would be unsafe, so the console does not expose it."/></DashboardShell>; }

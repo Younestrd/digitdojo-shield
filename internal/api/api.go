@@ -9,12 +9,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"digitdojo-shield/internal/blacklist"
 	"digitdojo-shield/internal/config"
+	"digitdojo-shield/internal/events"
 	"digitdojo-shield/internal/whitelist"
 )
 
@@ -27,6 +29,7 @@ type Server struct {
 	addBlacklist    func(string) error
 	addWhitelist    func(string) error
 	removeBlacklist func(string) error
+	subscribe       func(func(events.Event)) func()
 	limiter         *rateLimiter
 	server          *http.Server
 	mu              sync.Mutex
@@ -55,6 +58,7 @@ type Dependencies struct {
 	AddBlacklist    func(string) error
 	AddWhitelist    func(string) error
 	RemoveBlacklist func(string) error
+	Subscribe       func(func(events.Event)) func()
 }
 
 // ErrEnforcementUnavailable indicates that a requested firewall mutation cannot
@@ -106,6 +110,7 @@ func newServer(cfg config.Config, deps Dependencies) *Server {
 		addBlacklist:    deps.AddBlacklist,
 		addWhitelist:    deps.AddWhitelist,
 		removeBlacklist: deps.RemoveBlacklist,
+		subscribe:       deps.Subscribe,
 		limiter:         newRateLimiter(rateLimit, burst),
 	}
 }
@@ -118,7 +123,53 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/blacklist", s.authMiddleware(s.handleBlacklist))
 	mux.HandleFunc("/whitelist", s.authMiddleware(s.handleWhitelist))
 	mux.HandleFunc("/unban", s.authMiddleware(s.handleUnban))
+	mux.HandleFunc("/events", s.authMiddleware(s.handleEvents))
 	return mux
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.subscribe == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "event streaming is unavailable")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.writeJSONError(w, http.StatusInternalServerError, "streaming is unsupported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	eventCh := make(chan events.Event, 32)
+	unsubscribe := s.subscribe(func(event events.Event) {
+		select {
+		case eventCh <- event:
+		default:
+		}
+	})
+	defer unsubscribe()
+	fmt.Fprint(w, "retry: 5000\n\n")
+	flusher.Flush()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event := <-eventCh:
+			payload, err := json.Marshal(struct {
+				Type    string            `json:"type"`
+				Payload map[string]string `json:"payload"`
+			}{Type: event.Type, Payload: event.Payload})
+			if err != nil {
+				continue
+			}
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\nid: %s\n\n", event.Type, payload, strconv.FormatInt(time.Now().UnixNano(), 10))
+			flusher.Flush()
+		}
+	}
 }
 
 // Serve listens on the configured bind address.
