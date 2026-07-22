@@ -37,6 +37,17 @@ type Provider struct {
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`
 	Validation    string          `json:"validation"`
+	Health        ProviderHealth  `json:"health"`
+}
+type ProviderHealth struct {
+	Status               HealthStatus `json:"status"`
+	LastSuccess          *time.Time   `json:"last_success,omitempty"`
+	LastFailure          *time.Time   `json:"last_failure,omitempty"`
+	LastChecked          time.Time    `json:"last_checked"`
+	LastLatencyMillis    int64        `json:"last_latency_millis"`
+	ConsecutiveSuccesses int          `json:"consecutive_successes"`
+	ConsecutiveFailures  int          `json:"consecutive_failures"`
+	LastError            string       `json:"last_error,omitempty"`
 }
 type Rule struct {
 	ID              string            `json:"id"`
@@ -148,6 +159,36 @@ func (m *Manager) AddProvider(provider Provider) error {
 	provider.CreatedAt, provider.UpdatedAt = now, now
 	m.state.Providers = append(m.state.Providers, provider)
 	return m.saveLocked()
+}
+
+// UpdateHealth atomically records the observed result of validation, testing, or delivery.
+func (m *Manager) UpdateHealth(providerID string, status HealthStatus, latency time.Duration, cause error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().UTC()
+	for index := range m.state.Providers {
+		provider := &m.state.Providers[index]
+		if provider.ID != providerID {
+			continue
+		}
+		provider.Health.Status = status
+		provider.Health.LastChecked = now
+		provider.Health.LastLatencyMillis = latency.Milliseconds()
+		if cause == nil {
+			provider.Health.LastSuccess = &now
+			provider.Health.LastError = ""
+			provider.Health.ConsecutiveSuccesses++
+			provider.Health.ConsecutiveFailures = 0
+		} else {
+			provider.Health.LastFailure = &now
+			provider.Health.LastError = cause.Error()
+			provider.Health.ConsecutiveFailures++
+			provider.Health.ConsecutiveSuccesses = 0
+		}
+		provider.UpdatedAt = now
+		return m.saveLocked()
+	}
+	return fmt.Errorf("unknown provider %s", providerID)
 }
 func (m *Manager) Dispatch(ctx context.Context, event Event) {
 	m.mu.RLock()
