@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func collect(ctx context.Context, c *Collector) (Inventory, error) {
@@ -19,7 +20,7 @@ func collect(ctx context.Context, c *Collector) (Inventory, error) {
 	inventory := Inventory{Hostname: hostname, Architecture: runtime.GOARCH, DaemonVersion: "1.0.0", Distribution: readDistribution(), Kernel: readKernel(), CPUCores: runtime.NumCPU(), Interfaces: readInterfaces(), LoadAverage: readLoadAverage(), NftablesAvailable: commandAvailable(ctx, "nft"), IPTablesAvailable: commandAvailable(ctx, "iptables")}
 	inventory.UptimeSeconds = readUptime()
 	inventory.CPUModel = readCPUModel()
-	inventory.CPUUsagePercent = readCPUUsage(c)
+	inventory.CPUUsagePercent = readCPUUsage(ctx)
 	inventory.MemoryTotalBytes, inventory.MemoryAvailableBytes = readMemory()
 	inventory.Disks = readDisks()
 	return inventory, nil
@@ -75,31 +76,43 @@ func readCPUModel() string {
 	}
 	return "unknown"
 }
-func readCPUUsage(c *Collector) float64 {
+func readCPUUsage(ctx context.Context) float64 {
+	firstTotal, firstIdle, ok := cpuTicks()
+	if !ok {
+		return 0
+	}
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return 0
+	case <-timer.C:
+	}
+	secondTotal, secondIdle, ok := cpuTicks()
+	if !ok || secondTotal <= firstTotal {
+		return 0
+	}
+	return float64((secondTotal-firstTotal)-(secondIdle-firstIdle)) * 100 / float64(secondTotal-firstTotal)
+}
+func cpuTicks() (uint64, uint64, bool) {
 	data, err := os.ReadFile("/proc/stat")
 	if err != nil {
-		return 0
+		return 0, 0, false
 	}
 	fields := strings.Fields(strings.SplitN(string(data), "\n", 2)[0])
 	if len(fields) < 5 {
-		return 0
+		return 0, 0, false
 	}
 	var total uint64
-	for _, f := range fields[1:] {
-		v, _ := strconv.ParseUint(f, 10, 64)
-		total += v
+	for _, field := range fields[1:] {
+		value, error := strconv.ParseUint(field, 10, 64)
+		if error != nil {
+			return 0, 0, false
+		}
+		total += value
 	}
-	idle, _ := strconv.ParseUint(fields[4], 10, 64)
-	if c.previousTotal == 0 {
-		c.previousTotal, c.previousIdle = total, idle
-		return 0
-	}
-	deltaTotal, deltaIdle := total-c.previousTotal, idle-c.previousIdle
-	c.previousTotal, c.previousIdle = total, idle
-	if deltaTotal == 0 {
-		return 0
-	}
-	return float64(deltaTotal-deltaIdle) * 100 / float64(deltaTotal)
+	idle, error := strconv.ParseUint(fields[4], 10, 64)
+	return total, idle, error == nil
 }
 func readMemory() (uint64, uint64) {
 	file, err := os.Open("/proc/meminfo")

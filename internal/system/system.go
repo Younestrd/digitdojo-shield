@@ -33,10 +33,7 @@ type Inventory struct {
 	IPTablesAvailable    bool        `json:"iptables_available"`
 	DaemonVersion        string      `json:"daemon_version"`
 }
-type Collector struct {
-	previousTotal uint64
-	previousIdle  uint64
-}
+type Collector struct{}
 
 func NewCollector() *Collector                                      { return &Collector{} }
 func (c *Collector) Collect(ctx context.Context) (Inventory, error) { return collect(ctx, c) }
