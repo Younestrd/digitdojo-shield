@@ -195,19 +195,21 @@ func TestBackendRejectsNilContextsAndWrongSnapshots(t *testing.T) {
 		t.Fatalf("expected nil runner rejection")
 	}
 	implementation, _ := NewBackendWithRunner(&scriptedRunner{})
-	if err := implementation.Reconcile(nil, backend.DesiredState{}); err == nil {
+	if err := implementation.Reconcile(nilContextForTest(), backend.DesiredState{}); err == nil {
 		t.Fatalf("expected nil reconcile context rejection")
 	}
-	if _, err := implementation.Inspect(nil); err == nil {
+	if _, err := implementation.Inspect(nilContextForTest()); err == nil {
 		t.Fatalf("expected nil inspect context rejection")
 	}
-	if _, err := implementation.Snapshot(nil); err == nil {
+	if _, err := implementation.Snapshot(nilContextForTest()); err == nil {
 		t.Fatalf("expected nil snapshot context rejection")
 	}
-	if err := implementation.Cleanup(nil); err == nil {
+	if err := implementation.Cleanup(nilContextForTest()); err == nil {
 		t.Fatalf("expected nil cleanup context rejection")
 	}
 	if err := implementation.Restore(context.Background(), backend.Snapshot{Backend: backend.IPTables}); err == nil {
 		t.Fatalf("expected cross-backend snapshot rejection")
 	}
 }
+
+func nilContextForTest() context.Context { return nil }

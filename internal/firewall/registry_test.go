@@ -13,6 +13,8 @@ import (
 	"digitdojo-shield/internal/firewall/backend"
 )
 
+func nilContextForTest() context.Context { return nil }
+
 type testProbe struct {
 	name      backend.Name
 	detected  bool
@@ -174,10 +176,10 @@ func TestRegistryRejectsNilResolveContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create registry: %v", err)
 	}
-	if _, err := registry.Resolve(nil, "mock"); !errors.Is(err, ErrContextRequired) {
+	if _, err := registry.Resolve(nilContextForTest(), "mock"); !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("expected context error, got %v", err)
 	}
-	capabilities := registry.Detect(nil)
+	capabilities := registry.Detect(context.TODO())
 	if len(capabilities) != 1 || !capabilities[0].Detected {
 		t.Fatalf("nil-context detection should use a background context: %+v", capabilities)
 	}
@@ -455,13 +457,13 @@ func TestControllerContainsSnapshotRestoreAndInspectPanics(t *testing.T) {
 func TestControllerRequiresContextWhenEnabled(t *testing.T) {
 	implementation := &testBackend{name: "mock"}
 	controller := enabledController(t, implementation)
-	if err := controller.Reconcile(nil, backend.DesiredState{}); !errors.Is(err, ErrContextRequired) {
+	if err := controller.Reconcile(nilContextForTest(), backend.DesiredState{}); !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("expected reconcile context error, got %v", err)
 	}
-	if err := controller.Cleanup(nil); !errors.Is(err, ErrContextRequired) {
+	if err := controller.Cleanup(nilContextForTest()); !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("expected cleanup context error, got %v", err)
 	}
-	if _, err := controller.Inspect(nil); !errors.Is(err, ErrContextRequired) {
+	if _, err := controller.Inspect(nilContextForTest()); !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("expected inspect context error, got %v", err)
 	}
 }

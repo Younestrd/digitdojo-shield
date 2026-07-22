@@ -81,7 +81,7 @@ func CheckFirewallEnvironment() error {
 		return fmt.Errorf("nftables backend requires Linux; current operating system is %s", runtime.GOOS)
 	}
 	if _, err := os.Stat("/proc/self/ns/net"); err != nil {
-		return fmt.Errorf("Linux network namespace support is unavailable: %w", err)
+		return fmt.Errorf("linux network namespace support is unavailable: %w", err)
 	}
 	if err := requireCapability(capNetAdmin, "CAP_NET_ADMIN", "nftables can be inspected but Shield cannot create or modify rules"); err != nil {
 		return err
@@ -124,5 +124,5 @@ func effectiveCapabilities() (uint64, error) {
 		}
 		return strconv.ParseUint(strings.TrimSpace(value), 16, 64)
 	}
-	return 0, fmt.Errorf("CapEff is absent")
+	return 0, fmt.Errorf("capability effective-set field is absent")
 }
