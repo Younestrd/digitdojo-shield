@@ -25,3 +25,18 @@ func TestLoadFromFileParsesSimpleYAML(t *testing.T) {
 		t.Fatalf("expected packet threshold override, got %d", cfg.Detection.PacketThreshold)
 	}
 }
+
+func TestLoadFromFileAcceptsEmptyNestedValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	data := "api:\n  enabled: false\n  token:\n  bind_address: 127.0.0.1:9090\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadFromFile: %v", err)
+	}
+	if cfg.API.Token != "" || cfg.API.BindAddress != "127.0.0.1:9090" {
+		t.Fatalf("unexpected API config: %+v", cfg.API)
+	}
+}
