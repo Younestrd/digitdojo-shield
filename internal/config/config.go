@@ -12,54 +12,54 @@ import (
 )
 
 type Config struct {
-	General   GeneralConfig   `yaml:"general"`
-	Firewall  FirewallConfig  `yaml:"firewall"`
-	Detection DetectionConfig `yaml:"detection"`
-	Alerts    AlertsConfig    `yaml:"alerts"`
-	Logging   LoggingConfig   `yaml:"logging"`
-	API       APIConfig       `yaml:"api"`
+	General   GeneralConfig   `yaml:"general" json:"general"`
+	Firewall  FirewallConfig  `yaml:"firewall" json:"firewall"`
+	Detection DetectionConfig `yaml:"detection" json:"detection"`
+	Alerts    AlertsConfig    `yaml:"alerts" json:"alerts"`
+	Logging   LoggingConfig   `yaml:"logging" json:"logging"`
+	API       APIConfig       `yaml:"api" json:"api"`
 }
 
 type GeneralConfig struct {
-	LogDir    string `yaml:"log_dir"`
-	StateDir  string `yaml:"state_dir"`
-	HostBased bool   `yaml:"host_based"`
+	LogDir    string `yaml:"log_dir" json:"log_dir"`
+	StateDir  string `yaml:"state_dir" json:"state_dir"`
+	HostBased bool   `yaml:"host_based" json:"host_based"`
 }
 
 type FirewallConfig struct {
-	Backend             string `yaml:"backend"`
-	RateLimitPerSecond  int    `yaml:"rate_limit_per_second"`
-	ConnectionLimit     int    `yaml:"connection_limit"`
-	TemporaryBanSeconds int    `yaml:"temporary_ban_seconds"`
+	Backend             string `yaml:"backend" json:"backend"`
+	RateLimitPerSecond  int    `yaml:"rate_limit_per_second" json:"rate_limit_per_second"`
+	ConnectionLimit     int    `yaml:"connection_limit" json:"connection_limit"`
+	TemporaryBanSeconds int    `yaml:"temporary_ban_seconds" json:"temporary_ban_seconds"`
 }
 
 type DetectionConfig struct {
-	PacketThreshold     int `yaml:"packet_threshold"`
-	ConnectionThreshold int `yaml:"connection_threshold"`
-	BytesThreshold      int `yaml:"bytes_threshold"`
-	SuspiciousSpike     int `yaml:"suspicious_spike"`
-	PortScanThreshold   int `yaml:"port_scan_threshold"`
-	WindowSeconds       int `yaml:"window_seconds"`
+	PacketThreshold     int `yaml:"packet_threshold" json:"packet_threshold"`
+	ConnectionThreshold int `yaml:"connection_threshold" json:"connection_threshold"`
+	BytesThreshold      int `yaml:"bytes_threshold" json:"bytes_threshold"`
+	SuspiciousSpike     int `yaml:"suspicious_spike" json:"suspicious_spike"`
+	PortScanThreshold   int `yaml:"port_scan_threshold" json:"port_scan_threshold"`
+	WindowSeconds       int `yaml:"window_seconds" json:"window_seconds"`
 }
 
 type AlertsConfig struct {
-	DiscordWebhook string `yaml:"discord_webhook"`
-	SlackWebhook   string `yaml:"slack_webhook"`
-	Email          string `yaml:"email"`
+	DiscordWebhook string `yaml:"discord_webhook" json:"discord_webhook"`
+	SlackWebhook   string `yaml:"slack_webhook" json:"slack_webhook"`
+	Email          string `yaml:"email" json:"email"`
 }
 
 type LoggingConfig struct {
-	Level  string `yaml:"level"`
-	Rotate bool   `yaml:"rotate"`
+	Level  string `yaml:"level" json:"level"`
+	Rotate bool   `yaml:"rotate" json:"rotate"`
 }
 
 // APIConfig configures the optional REST API.
 type APIConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	Token       string `yaml:"token"`
-	BindAddress string `yaml:"bind_address"`
-	RateLimit   int    `yaml:"rate_limit"`
-	RateBurst   int    `yaml:"rate_burst"`
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	Token       string `yaml:"token" json:"token"`
+	BindAddress string `yaml:"bind_address" json:"bind_address"`
+	RateLimit   int    `yaml:"rate_limit" json:"rate_limit"`
+	RateBurst   int    `yaml:"rate_burst" json:"rate_burst"`
 }
 
 // DefaultConfig returns the safe baseline configuration for a host-based deployment.

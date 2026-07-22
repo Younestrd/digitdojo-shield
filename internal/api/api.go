@@ -34,6 +34,7 @@ type Server struct {
 	subscribe       func(func(events.Event)) func()
 	history         *history.Store
 	system          func(context.Context) (system.Inventory, error)
+	configs         *config.Manager
 	limiter         *rateLimiter
 	server          *http.Server
 	mu              sync.Mutex
@@ -65,6 +66,7 @@ type Dependencies struct {
 	Subscribe       func(func(events.Event)) func()
 	History         *history.Store
 	System          func(context.Context) (system.Inventory, error)
+	Configs         *config.Manager
 }
 
 // ErrEnforcementUnavailable indicates that a requested firewall mutation cannot
@@ -119,6 +121,7 @@ func newServer(cfg config.Config, deps Dependencies) *Server {
 		subscribe:       deps.Subscribe,
 		history:         deps.History,
 		system:          deps.System,
+		configs:         deps.Configs,
 		limiter:         newRateLimiter(rateLimit, burst),
 	}
 }
@@ -135,6 +138,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/attacks", s.authMiddleware(s.handleAttacks))
 	mux.HandleFunc("/analytics", s.authMiddleware(s.handleAnalytics))
 	mux.HandleFunc("/system", s.authMiddleware(s.handleSystem))
+	mux.HandleFunc("/config", s.authMiddleware(s.handleConfig))
+	mux.HandleFunc("/config/reload", s.authMiddleware(s.handleConfigReload))
+	mux.HandleFunc("/config/schema", s.authMiddleware(s.handleConfigSchema))
+	mux.HandleFunc("/config/rollback", s.authMiddleware(s.handleConfigRollback))
 	return mux
 }
 
@@ -252,6 +259,103 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(inventory)
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if s.configs == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "configuration management is unavailable")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeRedactedConfig(w, s.configs.Current(), s.configs.History())
+	case http.MethodPatch:
+		var candidate config.Config
+		if err := s.decodeJSONBody(r, &candidate); err != nil {
+			s.writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		current := s.configs.Current()
+		preserveSecrets(&candidate, current)
+		if err := s.configs.Update(candidate, "API configuration update"); err != nil {
+			s.writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeRedactedConfig(w, s.configs.Current(), s.configs.History())
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.configs == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "configuration management is unavailable")
+		return
+	}
+	if err := s.configs.Reload(); err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeRedactedConfig(w, s.configs.Current(), s.configs.History())
+}
+func (s *Server) handleConfigRollback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.configs == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "configuration management is unavailable")
+		return
+	}
+	var request struct {
+		Version int `json:"version"`
+	}
+	if err := s.decodeJSONBody(r, &request); err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.configs.Rollback(request.Version); err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeRedactedConfig(w, s.configs.Current(), s.configs.History())
+}
+func (s *Server) handleConfigSchema(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(configSchema())
+}
+func writeRedactedConfig(w http.ResponseWriter, cfg config.Config, history []config.Change) {
+	redacted := cfg
+	redacted.API.Token = ""
+	redacted.Alerts.DiscordWebhook = ""
+	redacted.Alerts.SlackWebhook = ""
+	redacted.Alerts.Email = ""
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"config": redacted, "secrets": map[string]bool{"api_token_configured": cfg.API.Token != "", "discord_configured": cfg.Alerts.DiscordWebhook != "", "slack_configured": cfg.Alerts.SlackWebhook != "", "email_configured": cfg.Alerts.Email != ""}, "history": history})
+}
+func preserveSecrets(candidate *config.Config, current config.Config) {
+	if candidate.API.Token == "" {
+		candidate.API.Token = current.API.Token
+	}
+	if candidate.Alerts.DiscordWebhook == "" {
+		candidate.Alerts.DiscordWebhook = current.Alerts.DiscordWebhook
+	}
+	if candidate.Alerts.SlackWebhook == "" {
+		candidate.Alerts.SlackWebhook = current.Alerts.SlackWebhook
+	}
+	if candidate.Alerts.Email == "" {
+		candidate.Alerts.Email = current.Alerts.Email
+	}
+}
+func configSchema() map[string]any {
+	return map[string]any{"type": "object", "sections": map[string]any{"detection": map[string]any{"packet_threshold": map[string]any{"type": "integer", "minimum": 1, "default": 2000, "description": "Packets per second required to signal a flood"}, "window_seconds": map[string]any{"type": "integer", "minimum": 1, "default": 30, "description": "Sampling interval; requires restart when changed"}}, "alerts": map[string]any{"discord_webhook": map[string]any{"type": "string", "secret": true, "description": "HTTPS Discord webhook"}, "slack_webhook": map[string]any{"type": "string", "secret": true, "description": "HTTPS Slack webhook"}}, "api": map[string]any{"enabled": map[string]any{"type": "boolean", "default": false}, "bind_address": map[string]any{"type": "string", "description": "Requires restart when changed"}}}}
 }
 
 func pagination(r *http.Request) (int, int, error) {

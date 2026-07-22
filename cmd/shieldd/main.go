@@ -30,7 +30,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "load configuration: %v\n", err)
 		os.Exit(1)
 	}
-	application, err := app.New(cfg)
+	manager, err := config.NewManager(*configPath, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "initialize configuration manager: %v\n", err)
+		os.Exit(1)
+	}
+	application, err := app.NewWithConfigManager(manager)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "initialize runtime: %v\n", err)
 		os.Exit(1)

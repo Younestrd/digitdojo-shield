@@ -37,6 +37,8 @@ const (
 // Application owns every daemon subsystem and their shared lifecycle.
 type Application struct {
 	cfg      config.Config
+	configMu sync.RWMutex
+	configs  *config.Manager
 	logger   *logger.StructuredLogger
 	firewall *firewall.Controller
 	storage  *storage.State
@@ -60,6 +62,22 @@ type Application struct {
 
 // New constructs the complete runtime without starting background work.
 func New(cfg config.Config) (*Application, error) {
+	manager, err := config.NewMemoryManager(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return NewWithConfigManager(manager)
+}
+
+// NewWithConfigManager constructs the runtime with a daemon-owned configuration lifecycle.
+func NewWithConfigManager(configs *config.Manager) (*Application, error) {
+	if configs == nil {
+		return nil, fmt.Errorf("configuration manager is required")
+	}
+	return newApplication(configs.Current(), configs)
+}
+
+func newApplication(cfg config.Config, configs *config.Manager) (*Application, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate configuration: %w", err)
 	}
@@ -106,6 +124,7 @@ func New(cfg config.Config) (*Application, error) {
 
 	application := &Application{
 		cfg:      cfg,
+		configs:  configs,
 		logger:   log,
 		firewall: firewallController,
 		storage:  sharedState,
@@ -140,6 +159,7 @@ func New(cfg config.Config) (*Application, error) {
 		Subscribe: application.events.Subscribe,
 		History:   application.history,
 		System:    application.system.Collect,
+		Configs:   application.configs,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("initialize API: %w", err))
@@ -151,7 +171,36 @@ func New(cfg config.Config) (*Application, error) {
 	}
 	application.events.Subscribe(application.logEvent)
 	application.events.Subscribe(application.alertOnRuntimeError)
+	configs.SetApply(application.applyConfiguration)
 	return application, nil
+}
+
+func (a *Application) applyConfiguration(candidate config.Config) error {
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if candidate.General != a.cfg.General {
+		return fmt.Errorf("general configuration requires a daemon restart")
+	}
+	if candidate.Firewall != a.cfg.Firewall {
+		return fmt.Errorf("firewall configuration requires a daemon restart")
+	}
+	if candidate.API != a.cfg.API {
+		return fmt.Errorf("API listener and authentication changes require a daemon restart")
+	}
+	if candidate.Detection.WindowSeconds != a.cfg.Detection.WindowSeconds {
+		return fmt.Errorf("detection.window_seconds requires a daemon restart")
+	}
+	if candidate.Logging != a.cfg.Logging {
+		return fmt.Errorf("logging configuration requires a daemon restart")
+	}
+	if err := alerts.New(candidate.Alerts.DiscordWebhook, candidate.Alerts.SlackWebhook, candidate.Alerts.Email).Validate(); err != nil {
+		return err
+	}
+	a.engine = detector.NewEngine(candidate.Detection.PacketThreshold)
+	a.alerts = alerts.New(candidate.Alerts.DiscordWebhook, candidate.Alerts.SlackWebhook, candidate.Alerts.Email)
+	a.cfg = candidate
+	a.events.Publish(events.Event{Type: "ConfigurationReloaded", Payload: map[string]string{"status": "applied"}})
+	return nil
 }
 
 func prepareDirectory(path string, mode os.FileMode) error {
