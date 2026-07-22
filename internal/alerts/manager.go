@@ -71,6 +71,10 @@ type Delivery struct {
 	Result         string    `json:"result"`
 	DurationMillis int64     `json:"duration_millis"`
 	Error          string    `json:"error,omitempty"`
+	RetryCount     int       `json:"retry_count"`
+	StartedAt      time.Time `json:"started_at"`
+	CompletedAt    time.Time `json:"completed_at"`
+	ResponseCode   int       `json:"response_code,omitempty"`
 }
 type state struct {
 	Version    int        `json:"version"`
@@ -114,11 +118,20 @@ type Notification struct {
 	Fields   map[string]string
 }
 
+// DeliveryResult is transport-neutral; AlertManager owns all state mutation.
+type DeliveryResult struct {
+	Success      bool
+	Retryable    bool
+	ResponseCode int
+	Error        error
+	Metadata     map[string]string
+}
+
 // Transport owns a real provider connection and its complete lifecycle.
 type Transport interface {
 	Validate(context.Context, json.RawMessage) error
-	Send(context.Context, json.RawMessage, Notification) error
-	Test(context.Context, json.RawMessage) error
+	Send(context.Context, json.RawMessage, Notification) DeliveryResult
+	Test(context.Context, json.RawMessage) DeliveryResult
 	Health(context.Context, json.RawMessage) Health
 	Close() error
 }
@@ -218,17 +231,21 @@ func (m *Manager) Dispatch(ctx context.Context, event Event) {
 }
 func (m *Manager) deliver(ctx context.Context, rule Rule, provider Provider, event Event) {
 	start := time.Now()
-	delivery := Delivery{ID: id(), RuleID: rule.ID, ProviderID: provider.ID, Event: event.Type, Severity: event.Severity, Timestamp: start, Result: "failed"}
+	delivery := Delivery{ID: id(), RuleID: rule.ID, ProviderID: provider.ID, Event: event.Type, Severity: event.Severity, Timestamp: start, StartedAt: start, Result: "failed"}
 	transport := m.transports[provider.Type]
 	timeout := time.Duration(provider.TimeoutMillis) * time.Millisecond
 	attempts := provider.Retry.Attempts
-	var err error
+	var result DeliveryResult
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
-		err = transport.Send(attemptCtx, provider.Secret, Notification{Event: event.Type, Severity: event.Severity, Message: event.Message, Fields: event.Fields})
+		result = transport.Send(attemptCtx, provider.Secret, Notification{Event: event.Type, Severity: event.Severity, Message: event.Message, Fields: event.Fields})
 		cancel()
-		if err == nil {
+		delivery.RetryCount = attempt
+		if result.Success {
 			delivery.Result = "delivered"
+			break
+		}
+		if !result.Retryable {
 			break
 		}
 		if attempt+1 < attempts {
@@ -240,10 +257,32 @@ func (m *Manager) deliver(ctx context.Context, rule Rule, provider Provider, eve
 		}
 	}
 	delivery.DurationMillis = time.Since(start).Milliseconds()
-	if err != nil {
-		delivery.Error = err.Error()
+	delivery.CompletedAt = time.Now().UTC()
+	delivery.ResponseCode = result.ResponseCode
+	if result.Error != nil {
+		delivery.Error = result.Error.Error()
 	}
 	m.mu.Lock()
+	for index := range m.state.Providers {
+		if m.state.Providers[index].ID == provider.ID {
+			health := &m.state.Providers[index].Health
+			health.LastChecked = delivery.CompletedAt
+			health.LastLatencyMillis = delivery.DurationMillis
+			if delivery.Result == "delivered" {
+				health.Status = Healthy
+				health.LastSuccess = &delivery.CompletedAt
+				health.ConsecutiveSuccesses++
+				health.ConsecutiveFailures = 0
+				health.LastError = ""
+			} else {
+				health.Status = Unreachable
+				health.LastFailure = &delivery.CompletedAt
+				health.ConsecutiveFailures++
+				health.ConsecutiveSuccesses = 0
+				health.LastError = delivery.Error
+			}
+		}
+	}
 	m.state.Deliveries = append(m.state.Deliveries, delivery)
 	if len(m.state.Deliveries) > 10000 {
 		m.state.Deliveries = m.state.Deliveries[len(m.state.Deliveries)-10000:]
