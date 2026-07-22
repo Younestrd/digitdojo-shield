@@ -83,11 +83,11 @@ type state struct {
 	Deliveries []Delivery `json:"deliveries"`
 }
 type Manager struct {
-	mu         sync.RWMutex
-	path       string
-	state      state
-	transports map[ProviderType]Transport
-	cooldowns  map[string]time.Time
+	mu        sync.RWMutex
+	path      string
+	state     state
+	registry  *Registry
+	cooldowns map[string]time.Time
 }
 type Event struct {
 	Type     string
@@ -140,7 +140,13 @@ func NewManager(path string, transports map[ProviderType]Transport) (*Manager, e
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	m := &Manager{path: path, transports: transports, cooldowns: map[string]time.Time{}, state: state{Version: 1}}
+	registry := NewRegistry()
+	for kind, transport := range transports {
+		if err := registry.Register(kind, transport); err != nil {
+			return nil, err
+		}
+	}
+	m := &Manager{path: path, registry: registry, cooldowns: map[string]time.Time{}, state: state{Version: 1}}
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &m.state); err != nil {
 			return nil, fmt.Errorf("decode alert state: %w", err)
@@ -159,7 +165,7 @@ func (m *Manager) AddProvider(provider Provider) error {
 	if provider.ID == "" {
 		provider.ID = id()
 	}
-	if provider.Name == "" || m.transports[provider.Type] == nil {
+	if _, ok := m.registry.Resolve(provider.Type); provider.Name == "" || !ok {
 		return fmt.Errorf("provider name and supported type are required")
 	}
 	if provider.TimeoutMillis <= 0 {
@@ -232,7 +238,10 @@ func (m *Manager) Dispatch(ctx context.Context, event Event) {
 func (m *Manager) deliver(ctx context.Context, rule Rule, provider Provider, event Event) {
 	start := time.Now()
 	delivery := Delivery{ID: id(), RuleID: rule.ID, ProviderID: provider.ID, Event: event.Type, Severity: event.Severity, Timestamp: start, StartedAt: start, Result: "failed"}
-	transport := m.transports[provider.Type]
+	transport, ok := m.registry.Resolve(provider.Type)
+	if !ok {
+		return
+	}
 	timeout := time.Duration(provider.TimeoutMillis) * time.Millisecond
 	var result DeliveryResult
 	attempts := 0
