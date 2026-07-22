@@ -234,27 +234,27 @@ func (m *Manager) deliver(ctx context.Context, rule Rule, provider Provider, eve
 	delivery := Delivery{ID: id(), RuleID: rule.ID, ProviderID: provider.ID, Event: event.Type, Severity: event.Severity, Timestamp: start, StartedAt: start, Result: "failed"}
 	transport := m.transports[provider.Type]
 	timeout := time.Duration(provider.TimeoutMillis) * time.Millisecond
-	attempts := provider.Retry.Attempts
 	var result DeliveryResult
-	for attempt := 0; attempt < attempts; attempt++ {
+	attempts := 0
+	retryErr := Retry(ctx, provider.Retry, func(retryCtx context.Context) error {
 		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
 		result = transport.Send(attemptCtx, provider.Secret, Notification{Event: event.Type, Severity: event.Severity, Message: event.Message, Fields: event.Fields})
 		cancel()
-		delivery.RetryCount = attempt
+		attempts++
 		if result.Success {
-			delivery.Result = "delivered"
-			break
+			return nil
 		}
-		if !result.Retryable {
-			break
+		if result.Error == nil {
+			result.Error = fmt.Errorf("transport delivery failed")
 		}
-		if attempt+1 < attempts {
-			select {
-			case <-ctx.Done():
-				break
-			case <-time.After(time.Duration(provider.Retry.InitialBackoffMillis*(1<<attempt)) * time.Millisecond):
-			}
+		if result.Retryable {
+			return temporaryDeliveryError{result.Error}
 		}
+		return result.Error
+	})
+	delivery.RetryCount = attempts - 1
+	if retryErr == nil {
+		delivery.Result = "delivered"
 	}
 	delivery.DurationMillis = time.Since(start).Milliseconds()
 	delivery.CompletedAt = time.Now().UTC()
@@ -290,6 +290,10 @@ func (m *Manager) deliver(ctx context.Context, rule Rule, provider Provider, eve
 	_ = m.saveLocked()
 	m.mu.Unlock()
 }
+
+type temporaryDeliveryError struct{ error }
+
+func (temporaryDeliveryError) Temporary() bool { return true }
 func (m *Manager) saveLocked() error {
 	data, err := json.MarshalIndent(m.state, "", "  ")
 	if err != nil {
