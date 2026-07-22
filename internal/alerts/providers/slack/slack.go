@@ -19,7 +19,7 @@ type Provider struct{ client *httptransport.Client }
 
 func New(timeout time.Duration) *Provider { return &Provider{client: httptransport.New(timeout)} }
 func (p *Provider) Validate(ctx context.Context, raw json.RawMessage) error {
-	cfg, err := decode(raw)
+	_, err := decode(raw)
 	if err != nil {
 		return err
 	}
