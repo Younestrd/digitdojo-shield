@@ -1,0 +1,10 @@
+"use client";
+import { useQuery } from "@tanstack/react-query";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { useState } from "react";
+import { shieldAPI } from "@/lib/api";
+
+export function AnalyticsChart() {
+  const [period, setPeriod] = useState<"24h"|"7d"|"30d">("24h"); const query = useQuery({ queryKey:["shield","analytics",period], queryFn:() => shieldAPI.analytics(period) });
+  return <section className="surface rounded-2xl p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Observed traffic</h2><p className="mt-1 text-sm text-[var(--muted)]">Persisted daemon samples, without interpolation.</p></div><div className="flex rounded-lg border border-[var(--border)] p-1">{(["24h","7d","30d"] as const).map((value)=><button key={value} onClick={()=>setPeriod(value)} className={`rounded-md px-3 py-1.5 text-xs ${period===value?"bg-[#1d405a] text-white":"text-[var(--muted)]"}`}>{value}</button>)}</div></div>{query.isLoading ? <div className="mt-6 h-72 animate-pulse rounded-xl bg-white/5"/> : query.isError ? <p className="mt-6 text-sm text-[var(--danger)]">{query.error.message}</p> : <><div className="mt-4 h-72"><ResponsiveContainer width="100%" height="100%"><AreaChart data={query.data?.metrics}><defs><linearGradient id="traffic" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#4dd6ff" stopOpacity={.5}/><stop offset="100%" stopColor="#4dd6ff" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#243449" vertical={false}/><XAxis dataKey="timestamp" tickFormatter={(value)=>new Date(value).toLocaleTimeString()} stroke="#8fa1ba" fontSize={11}/><YAxis stroke="#8fa1ba" fontSize={11}/><Tooltip labelFormatter={(value)=>new Date(String(value)).toLocaleString()}/><Area type="monotone" dataKey="packets_per_second" stroke="#4dd6ff" fill="url(#traffic)" strokeWidth={2}/></AreaChart></ResponsiveContainer></div><p className="mt-3 text-xs text-[var(--muted)]">{query.data?.attack_count ?? 0} attacks began during this period. Unavailable: {query.data?.unavailable_dimensions.join(", ") || "none"}.</p></>}</section>;
+}

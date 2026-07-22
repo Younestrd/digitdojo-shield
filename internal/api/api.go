@@ -17,6 +17,7 @@ import (
 	"digitdojo-shield/internal/blacklist"
 	"digitdojo-shield/internal/config"
 	"digitdojo-shield/internal/events"
+	"digitdojo-shield/internal/history"
 	"digitdojo-shield/internal/whitelist"
 )
 
@@ -30,6 +31,7 @@ type Server struct {
 	addWhitelist    func(string) error
 	removeBlacklist func(string) error
 	subscribe       func(func(events.Event)) func()
+	history         *history.Store
 	limiter         *rateLimiter
 	server          *http.Server
 	mu              sync.Mutex
@@ -59,6 +61,7 @@ type Dependencies struct {
 	AddWhitelist    func(string) error
 	RemoveBlacklist func(string) error
 	Subscribe       func(func(events.Event)) func()
+	History         *history.Store
 }
 
 // ErrEnforcementUnavailable indicates that a requested firewall mutation cannot
@@ -111,6 +114,7 @@ func newServer(cfg config.Config, deps Dependencies) *Server {
 		addWhitelist:    deps.AddWhitelist,
 		removeBlacklist: deps.RemoveBlacklist,
 		subscribe:       deps.Subscribe,
+		history:         deps.History,
 		limiter:         newRateLimiter(rateLimit, burst),
 	}
 }
@@ -124,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/whitelist", s.authMiddleware(s.handleWhitelist))
 	mux.HandleFunc("/unban", s.authMiddleware(s.handleUnban))
 	mux.HandleFunc("/events", s.authMiddleware(s.handleEvents))
+	mux.HandleFunc("/attacks", s.authMiddleware(s.handleAttacks))
+	mux.HandleFunc("/analytics", s.authMiddleware(s.handleAnalytics))
 	return mux
 }
 
@@ -170,6 +176,84 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func (s *Server) handleAttacks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.history == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "attack history is unavailable")
+		return
+	}
+	offset, limit, err := pagination(r)
+	if err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, total := s.history.Attacks(offset, limit)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "total": total, "offset": offset, "limit": limit})
+}
+
+func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.history == nil {
+		s.writeJSONError(w, http.StatusServiceUnavailable, "analytics history is unavailable")
+		return
+	}
+	period := r.URL.Query().Get("period")
+	duration := 24 * time.Hour
+	switch period {
+	case "", "24h":
+	case "7d":
+		duration = 7 * 24 * time.Hour
+	case "30d":
+		duration = 30 * 24 * time.Hour
+	default:
+		s.writeJSONError(w, http.StatusBadRequest, "period must be 24h, 7d, or 30d")
+		return
+	}
+	cutoff := time.Now().UTC().Add(-duration)
+	metrics := s.history.Metrics(cutoff)
+	attacks, _ := s.history.Attacks(0, 100000)
+	attackCount := 0
+	for _, attack := range attacks {
+		if !attack.StartedAt.Before(cutoff) {
+			attackCount++
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"period": periodOrDefault(period), "metrics": metrics, "attack_count": attackCount, "unavailable_dimensions": []string{"protocols", "countries", "ports", "asns", "top_ips"}})
+}
+
+func pagination(r *http.Request) (int, int, error) {
+	offset, limit := 0, 50
+	var err error
+	if value := r.URL.Query().Get("offset"); value != "" {
+		offset, err = strconv.Atoi(value)
+		if err != nil || offset < 0 {
+			return 0, 0, fmt.Errorf("offset must be a non-negative integer")
+		}
+	}
+	if value := r.URL.Query().Get("limit"); value != "" {
+		limit, err = strconv.Atoi(value)
+		if err != nil || limit < 1 || limit > 200 {
+			return 0, 0, fmt.Errorf("limit must be between 1 and 200")
+		}
+	}
+	return offset, limit, nil
+}
+
+func periodOrDefault(value string) string {
+	if value == "" {
+		return "24h"
+	}
+	return value
 }
 
 // Serve listens on the configured bind address.

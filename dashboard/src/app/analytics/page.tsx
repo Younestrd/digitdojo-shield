@@ -1,2 +1,2 @@
-import { CapabilityNotice } from "@/components/capability-notice"; import { DashboardShell } from "@/components/dashboard-shell"; import { PageHeader } from "@/components/page-header";
-export default function AnalyticsPage() { return <DashboardShell><PageHeader title="Analytics" description="Traffic and threat trends across your selected time range."/><CapabilityNotice capability="Historical analytics" detail="The backend does not currently persist time-series traffic, protocol, port, country, or threat-trend measurements."/></DashboardShell>; }
+import { AnalyticsChart } from "@/components/analytics-chart"; import { DashboardShell } from "@/components/dashboard-shell"; import { PageHeader } from "@/components/page-header";
+export default function AnalyticsPage() { return <DashboardShell><PageHeader title="Analytics" description="Persisted host-level traffic and detector activity."/><AnalyticsChart/></DashboardShell>; }

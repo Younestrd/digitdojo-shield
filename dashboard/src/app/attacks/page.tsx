@@ -1,2 +1,2 @@
-import { CapabilityNotice } from "@/components/capability-notice"; import { DashboardShell } from "@/components/dashboard-shell"; import { PageHeader } from "@/components/page-header";
-export default function AttacksPage() { return <DashboardShell><PageHeader title="Attack center" description="Investigate active and resolved attacks."/><CapabilityNotice capability="Attack history" detail="The running backend exposes only the current attack status and signal count; it does not retain attack events, IP attribution, ASN, country, or mitigation timelines."/></DashboardShell>; }
+import { AttackHistory } from "@/components/attack-history"; import { DashboardShell } from "@/components/dashboard-shell"; import { PageHeader } from "@/components/page-header";
+export default function AttacksPage() { return <DashboardShell><PageHeader title="Attack center" description="Detector-derived lifecycle records retained by this Shield daemon."/><AttackHistory/></DashboardShell>; }

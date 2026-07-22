@@ -18,6 +18,7 @@ import (
 	"digitdojo-shield/internal/detector"
 	"digitdojo-shield/internal/events"
 	"digitdojo-shield/internal/firewall"
+	"digitdojo-shield/internal/history"
 	"digitdojo-shield/internal/logger"
 	"digitdojo-shield/internal/monitor"
 	"digitdojo-shield/internal/storage"
@@ -38,6 +39,7 @@ type Application struct {
 	logger   *logger.StructuredLogger
 	firewall *firewall.Controller
 	storage  *storage.State
+	history  *history.Store
 	detector *detector.Daemon
 	engine   *detector.Engine
 	monitor  *monitor.Monitor
@@ -87,6 +89,10 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return fail(fmt.Errorf("initialize shared state: %w", err))
 	}
+	historyStore, err := history.New(filepath.Join(cfg.General.StateDir, "shield-history.json"))
+	if err != nil {
+		return fail(fmt.Errorf("initialize telemetry history: %w", err))
+	}
 	backendRegistry, err := firewall.NewDefaultRegistry()
 	if err != nil {
 		return fail(fmt.Errorf("initialize firewall backend registry: %w", err))
@@ -101,6 +107,7 @@ func New(cfg config.Config) (*Application, error) {
 		logger:   log,
 		firewall: firewallController,
 		storage:  sharedState,
+		history:  historyStore,
 		detector: detector.NewDaemon(time.Duration(cfg.Detection.WindowSeconds) * time.Second),
 		engine:   detector.NewEngine(cfg.Detection.PacketThreshold),
 		monitor:  monitor.New(),
@@ -128,6 +135,7 @@ func New(cfg config.Config) (*Application, error) {
 			return fmt.Errorf("%w: unban changes are disabled until the privileged Linux firewall integration gate passes", api.ErrEnforcementUnavailable)
 		},
 		Subscribe: application.events.Subscribe,
+		History:   application.history,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("initialize API: %w", err))
@@ -252,6 +260,13 @@ func (a *Application) handleSample(metrics detector.Metrics) {
 		FirewallEnforced: a.firewall.EnforcementEnabled(),
 	}
 	a.statsMu.Unlock()
+	attacks := make([]history.Attack, 0, len(signals))
+	for _, signal := range signals {
+		attacks = append(attacks, history.Attack{Type: signal.AttackType, Severity: signal.Severity})
+	}
+	if err := a.history.Record(history.Metric{PacketsPerSecond: metrics.PacketsPerSecond, ConnectionsPerSecond: metrics.ConnectionsPerSecond, BytesPerSecond: metrics.BytesPerSecond, Blocked: snapshot.BlockedIPs, Signals: len(signals)}, attacks); err != nil {
+		a.handleDetectorError(fmt.Errorf("persist telemetry history: %w", err))
+	}
 
 	a.events.Publish(events.Event{Type: eventSampleCollected, Payload: map[string]string{
 		"packets_per_second": strconv.Itoa(metrics.PacketsPerSecond),

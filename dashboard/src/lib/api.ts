@@ -1,4 +1,4 @@
-import type { BlockedResponse, ShieldStats } from "@/lib/types";
+import type { Analytics, AttackPage, BlockedResponse, ShieldStats } from "@/lib/types";
 
 const proxyBase = "/api/shield";
 
@@ -21,4 +21,6 @@ export const shieldAPI = {
   blacklist: (ip: string) => request<void>("/blacklist", { method: "POST", body: JSON.stringify({ ip }) }),
   whitelist: (ip: string) => request<void>("/whitelist", { method: "POST", body: JSON.stringify({ ip }) }),
   unban: (ip: string) => request<void>("/unban", { method: "POST", body: JSON.stringify({ ip }) }),
+  attacks: (offset = 0, limit = 50) => request<AttackPage>(`/attacks?offset=${offset}&limit=${limit}`),
+  analytics: (period: "24h" | "7d" | "30d") => request<Analytics>(`/analytics?period=${period}`),
 };
