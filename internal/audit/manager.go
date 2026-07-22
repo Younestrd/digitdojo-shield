@@ -49,7 +49,7 @@ func New(path string) (*Manager, error) {
 }
 func (m *Manager) Record(record Record) error {
 	if record.ID == "" {
-		id, err := newID()
+		id, err := NewID()
 		if err != nil {
 			return err
 		}
@@ -152,7 +152,7 @@ func matches(record Record, q Query) bool {
 	needle := strings.ToLower(q.Search)
 	return needle == "" || strings.Contains(strings.ToLower(fmt.Sprintf("%v", record)), needle)
 }
-func newID() (string, error) {
+func NewID() (string, error) {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
